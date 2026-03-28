@@ -47,7 +47,7 @@ public class NextDnsRewriteExclusionParser {
                 patterns.add(patternElement.getAsString());
             }
 
-            boolean cleanupExisting = true;
+            boolean cleanupExisting = false;
             if (json.has("cleanupExisting")) {
                 JsonElement cleanupExistingElement = json.get("cleanupExisting");
                 if (!cleanupExistingElement.isJsonPrimitive() || !cleanupExistingElement.getAsJsonPrimitive().isBoolean()) {

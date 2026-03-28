@@ -20,7 +20,7 @@ class NextDnsRewriteExclusionParserTest {
     }
 
     @Test
-    void defaultsCleanupExistingToTrue() {
+    void defaultsCleanupExistingToFalse() {
         Optional<NextDnsRewriteExclusionConfig> config = parser.parse("""
                 {
                   "patterns": ["*.instagram.com"]
@@ -29,21 +29,21 @@ class NextDnsRewriteExclusionParserTest {
 
         assertTrue(config.isPresent());
         assertEquals(1, config.get().patterns().size());
-        assertTrue(config.get().cleanupExisting());
+        assertFalse(config.get().cleanupExisting());
     }
 
     @Test
-    void respectsCleanupExistingFalse() {
+    void respectsCleanupExistingTrue() {
         Optional<NextDnsRewriteExclusionConfig> config = parser.parse("""
                 {
                   "patterns": ["*.instagram.com", "*.facebook.com"],
-                  "cleanupExisting": false
+                  "cleanupExisting": true
                 }
                 """);
 
         assertTrue(config.isPresent());
         assertEquals(2, config.get().patterns().size());
-        assertFalse(config.get().cleanupExisting());
+        assertTrue(config.get().cleanupExisting());
     }
 
     @Test

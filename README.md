@@ -101,12 +101,13 @@ will keep only `domain.to.block` and `another.to.block` for the further block pr
 Set JSON config to **environment variable** `NEXTDNS_REWRITE_EXCLUSIONS`
 
 ```json
-{"patterns":["*.instagram.com","*.facebook.com"],"cleanupExisting":true}
+{"patterns":["*.instagram.com","*.facebook.com"]}
 ```
 
 - `patterns` filters matching domains out of new NextDNS rewrite creation.
 - This config is evaluated during the NextDNS `REDIRECT` rewrite flow.
 - `cleanupExisting` controls only deletion of already existing matching rewrites in NextDNS.
+- If `cleanupExisting` is omitted, it defaults to `false`.
 - If `cleanupExisting=false`, new matching rewrites are still filtered out, but existing matching rewrites are left untouched.
 - If no `REDIRECT` sources are provided, exclusion filtering and exclusion cleanup do not run.
 - Matching is case-insensitive and strips leading `www.` before comparison.
@@ -141,7 +142,7 @@ For `BLOCK`:
 
 For `NEXTDNS_REWRITE_EXCLUSIONS`:
 + If `cleanupExisting=true`, existing matching rewrites are removed through the existing rate-limited API path
-+ If `cleanupExisting=false`, existing matching rewrites stay as-is
++ If `cleanupExisting=false` or the field is omitted, existing matching rewrites stay as-is
 
 Previously generated data is removed **ONLY** when both `BLOCK` and `REDIRECT` sources were not provided.
 

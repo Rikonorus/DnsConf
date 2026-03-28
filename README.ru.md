@@ -126,12 +126,13 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 Укажите JSON в **переменной окружения** `NEXTDNS_REWRITE_EXCLUSIONS`
 
 ```json
-{"patterns":["*.instagram.com","*.facebook.com"],"cleanupExisting":true}
+{"patterns":["*.instagram.com","*.facebook.com"]}
 ```
 
 + `patterns` исключает совпавшие домены из создания новых NextDNS rewrites.
 + Эта конфигурация применяется во время обработки NextDNS `REDIRECT`.
 + `cleanupExisting` управляет только удалением уже существующих совпавших rewrites в NextDNS.
++ Если `cleanupExisting` не указан, по умолчанию используется `false`.
 + Если `cleanupExisting=false`, новые совпавшие rewrites всё равно не создаются, но существующие совпавшие записи не удаляются.
 + Если источники `REDIRECT` не заданы, фильтрация и очистка по исключениям не выполняются.
 + Сопоставление нечувствительно к регистру и перед сравнением убирает префикс `www.`.
@@ -170,7 +171,7 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 
 Для `NEXTDNS_REWRITE_EXCLUSIONS`:
 + Если `cleanupExisting=true`, существующие совпавшие rewrites удаляются через уже существующий путь API с повторными попытками и ожиданием при rate limit
-+ Если `cleanupExisting=false`, существующие совпавшие rewrites остаются без изменений
++ Если `cleanupExisting=false` или это поле не указано, существующие совпавшие rewrites остаются без изменений
 
 Ранее сгенерированные данные удаляются, если не заданы источники **ДЛЯ ОБЕИХ НАСТРОЕК** `BLOCK` и `REDIRECT`.
 

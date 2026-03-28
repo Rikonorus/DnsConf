@@ -75,7 +75,7 @@ public class NextDnsTaskRunner implements DnsTaskRunner {
             List<CreateRewriteDto> createRewriteDtos = nextDnsRewriteService.cleanupOutdated(
                     requests,
                     exclusionMatcher,
-                    exclusionConfig.map(NextDnsRewriteExclusionConfig::cleanupExisting).orElse(true)
+                    exclusionConfig.map(NextDnsRewriteExclusionConfig::cleanupExisting).orElse(false)
             );
 
             Log.step("Save rewrites");
