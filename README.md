@@ -190,6 +190,8 @@ What to watch in the logs:
 - `Skipping ... rewrite candidates due to exclusion patterns`
 - `Removing ... excluded rewrites from NextDNS` when `cleanupExisting=true`
 - `Saving ... new rewrites to NextDNS...`
+- `Skipped ... malformed override lines` if the upstream hosts source contains broken rows without a domain
+- `No block sources provided; skipping denylist update` when you intentionally run a REDIRECT-only setup
 
 Important:
 - There is no dry-run mode here.
@@ -211,3 +213,10 @@ Important:
 
 + The action will be launched every day at **01:30 UTC**. To set another time, change cron at `.github/workflows/github_action.yml`
 + You can run the action manually via `Run workflow` button: switch to _Actions_ tab and choose workflow named **DNS Block&Redirect Configurer cron task**
+
+#### What to verify after a manual workflow run
+- The job should finish with **Success**
+- The logs should show rewrite source loading, any `Skipped ... malformed override lines` summary, and the final `Saving ... new rewrites to NextDNS...` step
+- For a REDIRECT-only setup, verify the `No block sources provided; skipping denylist update` log entry and confirm that the denylist was left untouched
+- If `cleanupExisting=true`, also verify the `Removing ... excluded rewrites from NextDNS` log entry
+- After a successful run, open the target NextDNS profile and confirm that the expected rewrites were created or updated, while domains matched by `NEXTDNS_REWRITE_EXCLUSIONS.patterns` were not recreated

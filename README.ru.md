@@ -221,6 +221,8 @@ docker compose --profile apply run --rm apply
 + `Skipping ... rewrite candidates due to exclusion patterns`
 + `Removing ... excluded rewrites from NextDNS`, если `cleanupExisting=true`
 + `Saving ... new rewrites to NextDNS...`
++ `Skipped ... malformed override lines`, если во внешнем hosts-источнике встретились битые строки без домена
++ `No block sources provided; skipping denylist update`, если вы запускаете сценарий только с `REDIRECT`
 
 Важно:
 + Dry-run режима здесь нет.
@@ -246,3 +248,10 @@ https://www.youtube.com/watch?v=vbAXM_xAL5I
   Чтобы изменить время, отредактируйте cron в `.github/workflows/github_action.yml`
 + **Action** можно запустить вручную через кнопку **Run workflow**:  
   вкладка _Actions_ → workflow **DNS Block&Redirect Configurer cron task**
+
+#### Что проверить после ручного запуска workflow
++ Job должен завершиться со статусом **Success**
++ В логах должны быть видны шаги загрузки rewrite-источника, возможный `Skipped ... malformed override lines` и сохранение через `Saving ... new rewrites to NextDNS...`
++ Для REDIRECT-only сценария проверьте строку `No block sources provided; skipping denylist update` и убедитесь, что denylist не менялся
++ Если `cleanupExisting=true`, дополнительно проверьте строку `Removing ... excluded rewrites from NextDNS`
++ После успешного run откройте профиль NextDNS и убедитесь, что нужные rewrites появились или обновились, а домены из `NEXTDNS_REWRITE_EXCLUSIONS.patterns` не были созданы заново

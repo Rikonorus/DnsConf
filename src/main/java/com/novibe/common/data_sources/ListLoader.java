@@ -1,5 +1,7 @@
 package com.novibe.common.data_sources;
 
+import com.novibe.common.util.DataParser;
+import com.novibe.common.util.DataParser.HostsLine;
 import com.novibe.common.util.Log;
 import lombok.Cleanup;
 import lombok.Setter;
@@ -12,10 +14,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.function.Predicate;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Setter(onMethod_ = @Autowired)
@@ -23,11 +26,11 @@ public abstract class ListLoader<T> {
 
     private HttpClient client;
 
-    protected abstract T toObject(String line);
+    protected abstract T toObject(HostsLine line);
 
     protected abstract String listType();
 
-    protected abstract Predicate<String> filterRelatedLines();
+    protected abstract Predicate<HostsLine> filterRelatedLines();
 
     @SneakyThrows
     @SuppressWarnings("preview")
@@ -38,14 +41,36 @@ public abstract class ListLoader<T> {
                 .map(url -> scope.fork(() -> fetchList(url)))
                 .forEach(requests::add);
         scope.join();
-        return requests.stream()
-                .map(StructuredTaskScope.Subtask::get)
-                .map(String::stripIndent)
-                .flatMap(s -> Pattern.compile("\\r?\\n").splitAsStream(s))
-                .parallel()
-                .filter(line -> !line.isBlank())
-                .filter(line -> !line.startsWith("#"))
-                .map(String::toLowerCase)
+
+        List<HostsLine> parsedLines = new ArrayList<>();
+        int malformedCount = 0;
+        LinkedHashSet<String> malformedExamples = new LinkedHashSet<>();
+
+        for (StructuredTaskScope.Subtask<String> request : requests) {
+            List<String> lines = DataParser.splitByEol(request.get())
+                    .filter(line -> !line.isBlank())
+                    .map(String::toLowerCase)
+                    .toList();
+
+            for (String line : lines) {
+                Optional<HostsLine> hostsLine = DataParser.parseHostsLine(line);
+                if (hostsLine.isPresent()) {
+                    parsedLines.add(hostsLine.get());
+                    continue;
+                }
+
+                if (DataParser.hasMeaningfulContent(line)) {
+                    malformedCount++;
+                    if (malformedExamples.size() < 3) {
+                        malformedExamples.add(DataParser.summarizeForLog(line));
+                    }
+                }
+            }
+        }
+
+        logMalformedLines(malformedCount, malformedExamples);
+
+        return parsedLines.parallelStream()
                 .filter(filterRelatedLines())
                 .distinct()
                 .map(this::toObject)
@@ -61,11 +86,15 @@ public abstract class ListLoader<T> {
         return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).body();
     }
 
-    protected String removeWWW(String domain) {
-        if (domain.startsWith("www.")) {
-            return domain.substring("www.".length());
+    private void logMalformedLines(int malformedCount, LinkedHashSet<String> malformedExamples) {
+        if (malformedCount > 0) {
+            String examples = malformedExamples.stream()
+                    .map(example -> "`%s`".formatted(example))
+                    .collect(Collectors.joining(", "));
+
+            Log.io("Skipped %s malformed %s lines. Examples: %s"
+                    .formatted(malformedCount, listType().toLowerCase(), examples));
         }
-        return domain;
     }
 
 }

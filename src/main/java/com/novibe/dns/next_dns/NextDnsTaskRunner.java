@@ -52,7 +52,7 @@ public class NextDnsTaskRunner implements DnsTaskRunner {
             Log.step("Save denylist");
             nextDnsDenyService.saveDenyList(filteredBlocklist);
         } else {
-            Log.fail("No block sources provided");
+            Log.common("No block sources provided; skipping denylist update");
         }
 
         List<String> rewriteSources = EnvParser.parse(REDIRECT);
@@ -81,7 +81,7 @@ public class NextDnsTaskRunner implements DnsTaskRunner {
             Log.step("Save rewrites");
             nextDnsRewriteService.saveRewrites(createRewriteDtos);
         } else {
-            Log.fail("No rewrite sources provided");
+            Log.common("No rewrite sources provided; skipping rewrite update");
         }
 
         if (blockSources.isEmpty() && rewriteSources.isEmpty()) {

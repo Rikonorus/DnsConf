@@ -1,0 +1,8 @@
+# comment only
+157.240.245.174 www.instagram.com
+157.240.245.174	b.i.instagram.com
+103.27.157.38
+103.27.157.100 # malformed ip only
+0.0.0.0 blocked.example.com
+8.8.8.8   google.com   # inline comment
+1.2.3.4	example.com
