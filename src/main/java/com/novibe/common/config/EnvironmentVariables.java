@@ -18,6 +18,8 @@ public class EnvironmentVariables {
 
     public static final String EXCLUDE_REDIRECT = System.getenv("EXCLUDE_REDIRECT");
 
+    public static final String NEXTDNS_REWRITE_EXCLUSIONS = System.getenv("NEXTDNS_REWRITE_EXCLUSIONS");
+
     private static String extractMandatoryVariable(String key) {
         String env = System.getenv(key);
         if (isNull(env) || env.isBlank()) {

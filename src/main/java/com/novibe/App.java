@@ -26,6 +26,7 @@ public class App {
         String commonsBasePackage = "com.novibe.common";
         commonContext = new AnnotationConfigApplicationContext(commonsBasePackage);
         AnnotationConfigApplicationContext currentContext = null;
+        boolean hasErrors = false;
 
         for (DnsProfile dnsProfile : dnsProfiles) {
             try {
@@ -35,14 +36,20 @@ public class App {
                 runner.run();
 
             } catch (ProcessException processException) {
+                hasErrors = true;
                 Log.fail("Process Exception on profile " + dnsProfile.number());
                 Log.fail(processException.getMessage());
             } catch (Exception exception) {
+                hasErrors = true;
                 Log.fail("Unexpected exception on profile " + dnsProfile.number());
                 exception.printStackTrace(System.out);
             } finally {
                 if (nonNull(currentContext)) currentContext.close();
             }
+        }
+
+        if (hasErrors) {
+            System.exit(1);
         }
     }
 

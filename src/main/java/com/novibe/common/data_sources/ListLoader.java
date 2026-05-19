@@ -14,11 +14,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.StructuredTaskScope;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+
+import static java.util.Objects.nonNull;
 
 @Setter(onMethod_ = @Autowired)
 public abstract class ListLoader<T> {
@@ -40,16 +42,36 @@ public abstract class ListLoader<T> {
                 .map(url -> scope.fork(() -> fetchList(url)))
                 .forEach(requests::add);
         scope.join();
-        return requests.stream()
-                .map(StructuredTaskScope.Subtask::get)
-                .flatMap(DataParser::splitByEol)
-                .map(String::strip)
-                .parallel()
-                .filter(line -> !line.isBlank())
-                .filter(line -> !DataParser.isComment(line))
-                .map(String::toLowerCase)
-                .map(DataParser::parseHostsLine)
-                .filter(Objects::nonNull)
+
+        List<HostsLine> parsedLines = new ArrayList<>();
+        int malformedCount = 0;
+        LinkedHashSet<String> malformedExamples = new LinkedHashSet<>();
+
+        for (StructuredTaskScope.Subtask<String> request : requests) {
+            List<String> lines = DataParser.splitByEol(request.get())
+                    .filter(line -> !line.isBlank())
+                    .map(String::toLowerCase)
+                    .toList();
+
+            for (String line : lines) {
+                HostsLine hostsLine = DataParser.parseHostsLine(line);
+                if (nonNull(hostsLine)) {
+                    parsedLines.add(hostsLine);
+                    continue;
+                }
+
+                if (DataParser.hasMeaningfulContent(line)) {
+                    malformedCount++;
+                    if (malformedExamples.size() < 3) {
+                        malformedExamples.add(DataParser.summarizeForLog(line));
+                    }
+                }
+            }
+        }
+
+        logMalformedLines(malformedCount, malformedExamples);
+
+        return parsedLines.parallelStream()
                 .filter(filterRelatedLines())
                 .distinct()
                 .map(this::toObject)
@@ -63,6 +85,17 @@ public abstract class ListLoader<T> {
                 .GET()
                 .build();
         return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)).body();
+    }
+
+    private void logMalformedLines(int malformedCount, LinkedHashSet<String> malformedExamples) {
+        if (malformedCount > 0) {
+            String examples = malformedExamples.stream()
+                    .map(example -> "`%s`".formatted(example))
+                    .collect(Collectors.joining(", "));
+
+            Log.io("Skipped %s malformed %s lines. Examples: %s"
+                    .formatted(malformedCount, listType().toLowerCase(), examples));
+        }
     }
 
 }

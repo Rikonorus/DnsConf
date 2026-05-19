@@ -1,9 +1,12 @@
 package com.novibe.common.data_sources;
 
 import com.novibe.common.base_structures.HostsLine;
+import com.novibe.common.util.DataParser;
 import org.springframework.stereotype.Service;
 
 import java.util.function.Predicate;
+
+import static java.util.Objects.nonNull;
 
 @Service
 public class HostsBlockListsLoader extends ListLoader<String> {
@@ -18,12 +21,20 @@ public class HostsBlockListsLoader extends ListLoader<String> {
 
     @Override
     protected Predicate<HostsLine> filterRelatedLines() {
-        return line -> isBlockIp(line.ip()) && !isLocalhost(line.domain());
+        return line -> nonNull(line.ip())
+                && nonNull(line.domain())
+                && isBlockIp(line.ip())
+                && !isLocalhost(line.domain());
     }
 
     @Override
     protected String toObject(HostsLine line) {
         return line.domain();
+    }
+
+    public static boolean isBlock(String line) {
+        HostsLine hostsLine = DataParser.parseHostsLine(line);
+        return nonNull(hostsLine) && nonNull(hostsLine.ip()) && isBlockIp(hostsLine.ip());
     }
 
     static boolean isBlockIp(String ip) {

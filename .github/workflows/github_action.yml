@@ -15,6 +15,7 @@ jobs:
       BLOCK: ${{ vars.BLOCK }}
       REDIRECT: ${{ vars.REDIRECT }}
       EXCLUDE_REDIRECT: ${{ vars.EXCLUDE_REDIRECT }}
+      NEXTDNS_REWRITE_EXCLUSIONS: ${{ vars.NEXTDNS_REWRITE_EXCLUSIONS }}
 
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
@@ -30,7 +31,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-          cache: maven
 
       - name: Build with Maven
         run: mvn -B clean package

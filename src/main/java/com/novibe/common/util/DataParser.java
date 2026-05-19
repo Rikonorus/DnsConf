@@ -11,6 +11,15 @@ public class DataParser {
 
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final Pattern EOL = Pattern.compile("\\r?\\n");
+    private static final int LOG_PREVIEW_LIMIT = 80;
+
+    public static boolean hasMeaningfulContent(String line) {
+        return !stripInlineComment(line).strip().isBlank();
+    }
+
+    public static Stream<String> splitByEol(String data) {
+        return EOL.splitAsStream(data);
+    }
 
     public static String removeWWW(String domain) {
         if (domain.startsWith("www.")) {
@@ -19,12 +28,8 @@ public class DataParser {
         return domain;
     }
 
-    public static boolean isComment(String line) {
-        return line.startsWith("#");
-    }
-
     public static @Nullable HostsLine parseHostsLine(String line) {
-        String sanitizedLine = stripInlineComment(line);
+        String sanitizedLine = stripInlineComment(line).strip();
         if (sanitizedLine.isBlank()) {
             return null;
         }
@@ -37,12 +42,15 @@ public class DataParser {
             String domain = removeWWW(columns[1]);
             return isValidIP(ip) ? new HostsLine(ip, domain) : null;
         }
-        Log.fail("Failed to parse hosts line: " + line);
         return null;
     }
 
-    public static Stream<String> splitByEol(String data) {
-        return EOL.splitAsStream(data);
+    public static String summarizeForLog(String line) {
+        String sanitized = stripInlineComment(line).strip();
+        if (sanitized.length() <= LOG_PREVIEW_LIMIT) {
+            return sanitized;
+        }
+        return sanitized.substring(0, LOG_PREVIEW_LIMIT - 3) + "...";
     }
 
     private static String stripInlineComment(String line) {

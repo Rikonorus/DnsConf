@@ -20,14 +20,14 @@ public class HostsOverrideListsLoader extends ListLoader<HostsOverrideListsLoade
 
     @Override
     protected Predicate<HostsLine> filterRelatedLines() {
-        return line -> !HostsBlockListsLoader.isBlockIp(line.ip()) && nonNull(line.domain());
-
+        return line -> nonNull(line.ip())
+                && nonNull(line.domain())
+                && !HostsBlockListsLoader.isBlockIp(line.ip());
     }
 
     @Override
     protected BypassRoute toObject(HostsLine line) {
         return new BypassRoute(line.ip(), line.domain());
-
     }
 
 }
