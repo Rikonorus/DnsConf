@@ -5,8 +5,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.function.Predicate;
 
-import static java.util.Objects.nonNull;
-
 @Service
 public class HostsOverrideListsLoader extends ListLoader<HostsOverrideListsLoader.BypassRoute> {
 
@@ -20,9 +18,7 @@ public class HostsOverrideListsLoader extends ListLoader<HostsOverrideListsLoade
 
     @Override
     protected Predicate<HostsLine> filterRelatedLines() {
-        return line -> nonNull(line.ip())
-                && nonNull(line.domain())
-                && !HostsBlockListsLoader.isBlockIp(line.ip());
+        return line -> line.hasIpAndDomain() && !HostsBlockListsLoader.isBlockIp(line.ip());
     }
 
     @Override

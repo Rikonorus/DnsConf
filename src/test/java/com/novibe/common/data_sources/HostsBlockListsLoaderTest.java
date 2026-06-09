@@ -32,9 +32,11 @@ class HostsBlockListsLoaderTest {
 
         List<String> blocks = loader.fetchWebsites(List.of("https://example.com/hosts"));
 
-        assertEquals(2, blocks.size());
+        assertEquals(4, blocks.size());
         assertTrue(blocks.contains("blocked.example.com"));
         assertTrue(blocks.contains("blocked-tab.example.com"));
+        assertTrue(blocks.contains("blocked-ipv6.example.com"));
+        assertTrue(blocks.contains("domain-only.example.com"));
     }
 
     private String loadFixture() throws Exception {

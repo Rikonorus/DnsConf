@@ -93,6 +93,8 @@ public class NextDnsRewriteService {
                 newRewriteRequests.remove(domain);
             }
         }
+        newRewriteRequests.keySet().removeIf(excludeRedirectCheckService::shouldExclude);
+
         if (!outdatedIds.isEmpty()) {
             Log.io("Removing %s outdated rewrites from NextDNS".formatted(outdatedIds.size()));
             NextDnsRateLimitedApiProcessor.callApi(outdatedIds, nextDnsRewriteClient::deleteRewriteById);

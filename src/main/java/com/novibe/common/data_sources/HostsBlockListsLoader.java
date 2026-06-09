@@ -21,10 +21,8 @@ public class HostsBlockListsLoader extends ListLoader<String> {
 
     @Override
     protected Predicate<HostsLine> filterRelatedLines() {
-        return line -> nonNull(line.ip())
-                && nonNull(line.domain())
-                && isBlockIp(line.ip())
-                && !isLocalhost(line.domain());
+        return line -> line.hasDomainOnly()
+                || (line.hasIpAndDomain() && isBlockIp(line.ip()) && !isLocalhost(line.domain()));
     }
 
     @Override
@@ -34,7 +32,8 @@ public class HostsBlockListsLoader extends ListLoader<String> {
 
     public static boolean isBlock(String line) {
         HostsLine hostsLine = DataParser.parseHostsLine(line);
-        return nonNull(hostsLine) && nonNull(hostsLine.ip()) && isBlockIp(hostsLine.ip());
+        return nonNull(hostsLine) && (hostsLine.hasDomainOnly()
+                || (hostsLine.hasIpAndDomain() && isBlockIp(hostsLine.ip())));
     }
 
     static boolean isBlockIp(String ip) {

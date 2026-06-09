@@ -1,6 +1,8 @@
 # comment only
 0.0.0.0 blocked.example.com
 127.0.0.1	blocked-tab.example.com
+::1 blocked-ipv6.example.com
+domain-only.example.com
 127.0.0.1 localhost
 ::1 ip6-localhost
 8.8.8.8 google.com

@@ -40,7 +40,9 @@ public class DataParser {
         } else if (columns.length == 2) {
             String ip = columns[0];
             String domain = removeWWW(columns[1]);
-            return isValidIP(ip) ? new HostsLine(ip, domain) : null;
+            if (isValidIP(ip)) {
+                return new HostsLine(ip, domain);
+            }
         }
         return null;
     }
