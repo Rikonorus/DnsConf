@@ -7,6 +7,7 @@ import org.apache.sshd.client.channel.ClientChannel;
 import org.apache.sshd.client.channel.ClientChannelEvent;
 import org.apache.sshd.client.keyverifier.KnownHostsServerKeyVerifier;
 import org.apache.sshd.client.keyverifier.RejectAllServerKeyVerifier;
+import org.apache.sshd.client.keyverifier.ServerKeyVerifier;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.sftp.client.SftpClient;
 import org.apache.sshd.sftp.client.SftpClientFactory;
@@ -21,6 +22,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.EnumSet;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /** Direct SSH/SFTP implementation of the fixed VPS allowlist contract. */
@@ -47,7 +49,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
     public Transaction stage(ProxyConfiguration configuration, ProxyAllowlist allowlist) {
         String remotePath = createRemoteTempPath();
         try {
-            withSession(configuration, session -> {
+            withSession(configuration, SshFailureCategory.SFTP, session -> {
                 try (SftpClient sftp = SftpClientFactory.instance().createSftpClient(session)) {
                     uploadAllowlist(sftp, remotePath, allowlist.bytes());
                 }
@@ -57,7 +59,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
         } catch (ProcessException exception) {
             throw exception;
         } catch (Exception exception) {
-            throw safeFailure("Proxy allowlist stage failed", exception);
+            throw safeFailure("Proxy allowlist stage failed");
         } finally {
             deleteRemoteFile(configuration, remotePath);
         }
@@ -80,7 +82,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
 
     private void deleteRemoteFile(ProxyConfiguration configuration, String remotePath) {
         try {
-            withSession(configuration, session -> {
+            withSession(configuration, SshFailureCategory.SFTP, session -> {
                 try (SftpClient sftp = SftpClientFactory.instance().createSftpClient(session)) {
                     sftp.remove(remotePath);
                 } catch (IOException ignored) {
@@ -94,7 +96,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
     }
 
     private String execute(ProxyConfiguration configuration, String command) {
-        return withSession(configuration, session -> {
+        return withSession(configuration, SshFailureCategory.COMMAND, session -> {
             try (ClientChannel channel = session.createExecChannel(command);
                  ByteArrayOutputStream stdout = new ByteArrayOutputStream();
                  ByteArrayOutputStream stderr = new ByteArrayOutputStream()) {
@@ -103,7 +105,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
                 channel.open().verify(COMMAND_TIMEOUT);
                 Set<ClientChannelEvent> events = channel.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), COMMAND_TIMEOUT);
                 if (!events.contains(ClientChannelEvent.CLOSED)) {
-                    throw new ProcessException("Proxy remote command timed out");
+                    throw commandTimeoutFailure();
                 }
                 Integer exitStatus = channel.getExitStatus();
                 if (!Integer.valueOf(0).equals(exitStatus)) {
@@ -163,21 +165,36 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
         };
     }
 
-    private <T> T withSession(ProxyConfiguration configuration, SessionWork<T> work) {
+    private <T> T withSession(
+            ProxyConfiguration configuration,
+            SshFailureCategory operation,
+            SessionWork<T> work
+    ) {
         Path knownHostsFile = null;
         try {
-            knownHostsFile = writeKnownHosts(configuration.knownHosts());
+            try {
+                knownHostsFile = writeKnownHosts(configuration.knownHosts());
+            } catch (Exception exception) {
+                throw sshFailure(SshFailureCategory.KNOWN_HOSTS, exception);
+            }
             try (SshClient client = SshClient.setUpDefaultClient()) {
-                client.setServerKeyVerifier(new KnownHostsServerKeyVerifier(
+                AtomicReference<HostKeyVerificationStatus> hostKeyStatus = new AtomicReference<>(
+                        HostKeyVerificationStatus.NOT_VERIFIED
+                );
+                KnownHostsServerKeyVerifier knownHostsVerifier = new KnownHostsServerKeyVerifier(
                         RejectAllServerKeyVerifier.INSTANCE, knownHostsFile
-                ));
+                );
+                client.setServerKeyVerifier(trackingPinnedVerifier(knownHostsVerifier, hostKeyStatus));
                 client.start();
-                try (ClientSession session = client.connect(USER, configuration.redirectTarget(), SSH_PORT)
-                        .verify(CONNECT_TIMEOUT).getSession()) {
-                    // Host-key verification happens during connect, before this identity is added.
-                    session.addPasswordIdentity(configuration.rootPassword());
-                    session.auth().verify(AUTH_TIMEOUT);
-                    return work.execute(session);
+                try (ClientSession session = connect(client, configuration, hostKeyStatus)) {
+                    authenticate(session, configuration.rootPassword());
+                    try {
+                        return work.execute(session);
+                    } catch (ProcessException exception) {
+                        throw exception;
+                    } catch (Exception exception) {
+                        throw sshFailure(operation, exception);
+                    }
                 } finally {
                     client.stop();
                 }
@@ -185,7 +202,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
         } catch (ProcessException exception) {
             throw exception;
         } catch (Exception exception) {
-            throw safeFailure("Proxy SSH operation failed", exception);
+            throw sshFailure(SshFailureCategory.CONNECT, exception);
         } finally {
             if (knownHostsFile != null) {
                 try {
@@ -195,6 +212,56 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
                 }
             }
         }
+    }
+
+    private ClientSession connect(
+            SshClient client,
+            ProxyConfiguration configuration,
+            AtomicReference<HostKeyVerificationStatus> hostKeyStatus
+    ) {
+        try {
+            ClientSession session = client.connect(USER, configuration.redirectTarget(), SSH_PORT)
+                    .verify(CONNECT_TIMEOUT)
+                    .getSession();
+            if (hostKeyStatus.get() != HostKeyVerificationStatus.VERIFIED) {
+                session.close(false);
+                throw new ProcessException("Proxy SSH host-key mismatch failed (HostKeyNotVerified)");
+            }
+            return session;
+        } catch (ProcessException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            SshFailureCategory category = hostKeyStatus.get() == HostKeyVerificationStatus.REJECTED
+                    ? SshFailureCategory.HOST_KEY_MISMATCH
+                    : SshFailureCategory.CONNECT;
+            throw sshFailure(category, exception);
+        }
+    }
+
+    private void authenticate(ClientSession session, String rootPassword) {
+        try {
+            // The password is added only after the strict pinned host key was verified during connect.
+            session.addPasswordIdentity(rootPassword);
+            session.auth().verify(AUTH_TIMEOUT);
+        } catch (Exception exception) {
+            throw sshFailure(SshFailureCategory.AUTHENTICATION, exception);
+        }
+    }
+
+    static ServerKeyVerifier trackingPinnedVerifier(
+            ServerKeyVerifier delegate,
+            AtomicReference<HostKeyVerificationStatus> hostKeyStatus
+    ) {
+        return (session, remoteAddress, serverKey) -> {
+            try {
+                boolean verified = delegate.verifyServerKey(session, remoteAddress, serverKey);
+                hostKeyStatus.set(verified ? HostKeyVerificationStatus.VERIFIED : HostKeyVerificationStatus.REJECTED);
+                return verified;
+            } catch (RuntimeException exception) {
+                hostKeyStatus.set(HostKeyVerificationStatus.REJECTED);
+                throw exception;
+            }
+        };
     }
 
     private Path writeKnownHosts(String knownHosts) throws IOException {
@@ -209,8 +276,41 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
         }
     }
 
-    private ProcessException safeFailure(String message, Exception cause) {
-        return new ProcessException(SensitiveValueRedactor.redact(message), cause);
+    static ProcessException sshFailure(SshFailureCategory category, Exception cause) {
+        String className = cause.getClass().getSimpleName();
+        if (className.isBlank()) {
+            className = cause.getClass().getName();
+        }
+        return new ProcessException("Proxy SSH " + category.label + " failed (" + className + ")");
+    }
+
+    static ProcessException commandTimeoutFailure() {
+        return new ProcessException("Proxy SSH command timeout");
+    }
+
+    private ProcessException safeFailure(String message) {
+        return new ProcessException(SensitiveValueRedactor.redact(message));
+    }
+
+    enum SshFailureCategory {
+        CONNECT("connect"),
+        HOST_KEY_MISMATCH("host-key mismatch"),
+        AUTHENTICATION("authentication"),
+        COMMAND("command"),
+        SFTP("SFTP"),
+        KNOWN_HOSTS("known-hosts setup");
+
+        private final String label;
+
+        SshFailureCategory(String label) {
+            this.label = label;
+        }
+    }
+
+    enum HostKeyVerificationStatus {
+        NOT_VERIFIED,
+        VERIFIED,
+        REJECTED
     }
 
     @FunctionalInterface

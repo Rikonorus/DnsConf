@@ -1,14 +1,20 @@
 package com.novibe.common.proxy;
 
 import com.novibe.common.exception.ProcessException;
+import org.apache.sshd.client.SshClient;
+import org.apache.sshd.common.signature.BuiltinSignatures;
 import org.apache.sshd.sftp.client.SftpClient;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -85,5 +91,62 @@ class ApacheSshProxySyncClientTest {
         when(uploaded.getUserId()).thenReturn(0);
 
         assertThrows(ProcessException.class, () -> ApacheSshProxySyncClient.uploadAllowlist(sftp, path, new byte[]{1}));
+    }
+
+    @Test
+    void defaultApacheSshClientExposesSshEd25519() throws Exception {
+        try (SshClient client = SshClient.setUpDefaultClient()) {
+            client.start();
+
+            assertTrue(BuiltinSignatures.ed25519.isSupported());
+            assertTrue(client.getSignatureFactories().stream()
+                    .anyMatch(factory -> "ssh-ed25519".equals(factory.getName())));
+        }
+    }
+
+    @Test
+    void reportsSafeSshFailureCategoriesAndNeverIncludesCauseText() {
+        IOException sensitiveCause = new IOException("password=never-log-this");
+        ProcessException connectFailure = ApacheSshProxySyncClient.sshFailure(
+                ApacheSshProxySyncClient.SshFailureCategory.CONNECT,
+                sensitiveCause
+        );
+
+        assertEquals(
+                "Proxy SSH connect failed (IOException)",
+                connectFailure.getMessage()
+        );
+        assertEquals(
+                "Proxy SSH host-key mismatch failed (IOException)",
+                ApacheSshProxySyncClient.sshFailure(
+                        ApacheSshProxySyncClient.SshFailureCategory.HOST_KEY_MISMATCH,
+                        sensitiveCause
+                ).getMessage()
+        );
+        assertEquals(
+                "Proxy SSH authentication failed (IOException)",
+                ApacheSshProxySyncClient.sshFailure(
+                        ApacheSshProxySyncClient.SshFailureCategory.AUTHENTICATION,
+                        sensitiveCause
+                ).getMessage()
+        );
+        assertEquals("Proxy SSH command timeout", ApacheSshProxySyncClient.commandTimeoutFailure().getMessage());
+        assertFalse(connectFailure.getMessage().contains("never-log-this"));
+        assertNull(connectFailure.getCause());
+    }
+
+    @Test
+    void rejectsAnUnpinnedHostKeyBeforeAuthenticationCanBegin() {
+        AtomicReference<ApacheSshProxySyncClient.HostKeyVerificationStatus> status = new AtomicReference<>(
+                ApacheSshProxySyncClient.HostKeyVerificationStatus.NOT_VERIFIED
+        );
+
+        boolean accepted = ApacheSshProxySyncClient.trackingPinnedVerifier(
+                (session, remoteAddress, serverKey) -> false,
+                status
+        ).verifyServerKey(null, null, null);
+
+        assertFalse(accepted);
+        assertEquals(ApacheSshProxySyncClient.HostKeyVerificationStatus.REJECTED, status.get());
     }
 }
