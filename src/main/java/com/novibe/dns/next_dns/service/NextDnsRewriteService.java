@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,6 +30,14 @@ public class NextDnsRewriteService {
             List<HostsOverrideListsLoader.BypassRoute> overrides,
             Optional<WildcardDomainMatcher> exclusionMatcher
     ) {
+        return buildNewRewrites(overrides, exclusionMatcher, Optional.empty());
+    }
+
+    public Map<String, CreateRewriteDto> buildNewRewrites(
+            List<HostsOverrideListsLoader.BypassRoute> overrides,
+            Optional<WildcardDomainMatcher> exclusionMatcher,
+            Optional<String> redirectTarget
+    ) {
         Map<String, CreateRewriteDto> rewriteDtos = new HashMap<>();
         int excludedCounter = 0;
         int excludeRedirectCounter = 0;
@@ -44,7 +53,9 @@ public class NextDnsRewriteService {
                 continue;
             }
 
-            rewriteDtos.putIfAbsent(route.website(), new CreateRewriteDto(route.website(), route.ip()));
+            rewriteDtos.putIfAbsent(route.website(), new CreateRewriteDto(
+                    route.website(), redirectTarget.orElse(route.ip())
+            ));
         }
 
         if (excludedCounter > 0) {
@@ -63,7 +74,17 @@ public class NextDnsRewriteService {
             Optional<WildcardDomainMatcher> exclusionMatcher,
             boolean cleanupExistingExcluded
     ) {
+        return cleanupOutdatedAndExcluded(newRewriteRequests, exclusionMatcher, cleanupExistingExcluded, Optional.empty());
+    }
+
+    public List<CreateRewriteDto> cleanupOutdatedAndExcluded(
+            Map<String, CreateRewriteDto> newRewriteRequests,
+            Optional<WildcardDomainMatcher> exclusionMatcher,
+            boolean cleanupExistingExcluded,
+            Optional<ProxyRewriteTargets> proxyTargets
+    ) {
         List<RewriteDto> existingRewrites = getExistingRewrites();
+        java.util.Set<String> desiredDomains = new HashSet<>(newRewriteRequests.keySet());
 
         List<String> outdatedIds = new ArrayList<>();
         List<String> excludedIds = new ArrayList<>();
@@ -80,8 +101,14 @@ public class NextDnsRewriteService {
             if (matchesExclusion(exclusionMatcher, domain)) {
                 if (cleanupExistingExcluded) {
                     excludedIds.add(existingRewrite.id());
+                    newRewriteRequests.remove(domain);
+                } else if (proxyTargets.filter(targets -> targets.manages(existingRewrite.content())).isPresent()
+                        && proxyTargets.get().needsMigration(existingRewrite.content())) {
+                    outdatedIds.add(existingRewrite.id());
+                    newRewriteRequests.put(domain, new CreateRewriteDto(domain, proxyTargets.get().currentTarget()));
+                } else {
+                    newRewriteRequests.remove(domain);
                 }
-                newRewriteRequests.remove(domain);
                 continue;
             }
 
@@ -91,6 +118,16 @@ public class NextDnsRewriteService {
                 outdatedIds.add(existingRewrite.id());
             } else {
                 newRewriteRequests.remove(domain);
+            }
+        }
+        if (proxyTargets.isPresent()) {
+            ProxyRewriteTargets targets = proxyTargets.get();
+            for (RewriteDto existingRewrite : existingRewrites) {
+                if (!desiredDomains.contains(existingRewrite.name()) && targets.manages(existingRewrite.content())
+                        && !excludeRedirectCheckService.shouldExclude(existingRewrite.name())
+                        && !matchesExclusion(exclusionMatcher, existingRewrite.name())) {
+                    outdatedIds.add(existingRewrite.id());
+                }
             }
         }
         newRewriteRequests.keySet().removeIf(excludeRedirectCheckService::shouldExclude);
@@ -110,7 +147,9 @@ public class NextDnsRewriteService {
             NextDnsRateLimitedApiProcessor.callApi(excludedIds, nextDnsRewriteClient::deleteRewriteById);
         }
 
-        return List.copyOf(newRewriteRequests.values());
+        return newRewriteRequests.values().stream()
+                .sorted(java.util.Comparator.comparing(CreateRewriteDto::name))
+                .toList();
     }
 
     public List<RewriteDto> getExistingRewrites() {
@@ -133,6 +172,16 @@ public class NextDnsRewriteService {
 
     private boolean matchesExclusion(Optional<WildcardDomainMatcher> exclusionMatcher, String domain) {
         return exclusionMatcher.map(matcher -> matcher.matches(domain)).orElse(false);
+    }
+
+    public record ProxyRewriteTargets(String currentTarget, java.util.Set<String> previousTargets) {
+        boolean manages(String content) {
+            return currentTarget.equals(content) || previousTargets.contains(content);
+        }
+
+        boolean needsMigration(String content) {
+            return previousTargets.contains(content);
+        }
     }
 
 }

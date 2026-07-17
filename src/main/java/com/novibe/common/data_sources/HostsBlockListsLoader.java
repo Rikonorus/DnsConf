@@ -36,7 +36,7 @@ public class HostsBlockListsLoader extends ListLoader<String> {
                 || (hostsLine.hasIpAndDomain() && isBlockIp(hostsLine.ip())));
     }
 
-    static boolean isBlockIp(String ip) {
+    public static boolean isBlockIp(String ip) {
         for (String blockIp : BLOCK_IPS) {
             if (blockIp.equals(ip)) {
                 return true;

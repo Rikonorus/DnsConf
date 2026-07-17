@@ -5,10 +5,15 @@ on:
     - cron: '30 1 * * *' # 04:30 MSK (01:30 UTC)
   workflow_dispatch:
 
+concurrency:
+  group: dnsconf-scheduled-or-manual-sync
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
     environment: DNS
+    timeout-minutes: 25
 
     env:
       DNS: ${{ vars.DNS }}
@@ -19,6 +24,10 @@ jobs:
 
       CLIENT_ID: ${{ secrets.CLIENT_ID }}
       AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
+      REDIRECT_TARGET: ${{ secrets.REDIRECT_TARGET }}
+      PROXY_PREVIOUS_REDIRECT_TARGETS: ${{ secrets.PROXY_PREVIOUS_REDIRECT_TARGETS }}
+      PROXY_VPS_ROOT_PASSWORD: ${{ secrets.PROXY_VPS_ROOT_PASSWORD }}
+      PROXY_VPS_SSH_KNOWN_HOSTS: ${{ secrets.PROXY_VPS_SSH_KNOWN_HOSTS }}
 
       TZ: Europe/Moscow
 

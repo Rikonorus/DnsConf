@@ -1,6 +1,7 @@
 package com.novibe.dns.cloudflare.service;
 
 import com.novibe.common.util.Log;
+import com.novibe.common.exception.ProcessException;
 import com.novibe.dns.cloudflare.http.CloudflareRuleClient;
 import com.novibe.dns.cloudflare.http.dto.request.CreateRuleRequest;
 import com.novibe.dns.cloudflare.http.dto.response.list.GatewayListDto;
@@ -40,7 +41,7 @@ public class RuleService {
         Log.io("Posting new blocking rule");
         SingleRuleApiResponse result = cloudflareRuleClient.createBlockingRule(rule);
         if (!result.isSuccess()) {
-            Log.fail("Failed to set blocking rule: " + result.getErrors());
+            throw new ProcessException("Cloudflare failed to set blocking rule");
         }
     }
 
@@ -71,7 +72,7 @@ public class RuleService {
         Log.io("Posting new override rule for IP: " + overrideIp);
         SingleRuleApiResponse result = cloudflareRuleClient.createBlockingRule(rule);
         if (!result.isSuccess()) {
-            Log.fail("Failed to set override rule: " + result.getErrors());
+            throw new ProcessException("Cloudflare failed to set override rule");
         }
     }
 
@@ -90,7 +91,7 @@ public class RuleService {
             String id = rule.getId();
             SingleRuleApiResponse result = cloudflareRuleClient.removeRuleById(id);
             if (!result.isSuccess()) {
-                Log.fail("Failed to remove old rule with id %s: %s".formatted(id, result.getErrors()));
+                throw new ProcessException("Cloudflare failed to remove an old rule");
             } else {
                 Log.progress(++counter + "/" + removeList.size());
                 rules.remove(rule);

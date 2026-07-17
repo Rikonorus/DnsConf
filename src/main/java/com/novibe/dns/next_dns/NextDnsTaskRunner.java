@@ -1,6 +1,9 @@
 package com.novibe.dns.next_dns;
 
 import com.novibe.common.DnsTaskRunner;
+import com.novibe.common.data_sources.RedirectSourceSnapshot;
+import com.novibe.common.data_sources.RedirectSourceSnapshotProvider;
+import com.novibe.common.proxy.ProxyConfiguration;
 import com.novibe.common.data_sources.HostsOverrideListsLoader;
 import com.novibe.common.util.EnvParser;
 import com.novibe.common.util.Log;
@@ -28,6 +31,8 @@ public class NextDnsTaskRunner extends DnsTaskRunner {
     private final NextDnsRewriteExclusionParser nextDnsRewriteExclusionParser;
     private final NextDnsRewriteService nextDnsRewriteService;
     private final NextDnsDenyService nextDnsDenyService;
+    private final RedirectSourceSnapshotProvider redirectSourceSnapshotProvider;
+    private final ProxyConfiguration proxyConfiguration;
 
     @Override
     public void greetingMessage() {
@@ -40,6 +45,13 @@ public class NextDnsTaskRunner extends DnsTaskRunner {
                 - if EXCLUDE_REDIRECT domains provided, they will be removed from existing redirect rules and won't be added with new ones.
                 - if NEXTDNS_REWRITE_EXCLUSIONS provided, matching new rewrite rules are skipped; cleanupExisting controls existing ones.
                 NextDNS api rate limiter reset config: 60 seconds after the last request""");
+    }
+
+    /** Parses configuration before proxy mode is allowed to create a stage. */
+    public void validateConfiguration() {
+        if (!EnvParser.parse(REDIRECT).isEmpty()) {
+            nextDnsRewriteExclusionParser.parse(NEXTDNS_REWRITE_EXCLUSIONS);
+        }
     }
 
     @Override
@@ -70,8 +82,9 @@ public class NextDnsTaskRunner extends DnsTaskRunner {
 
         if (!rewriteSources.isEmpty()) {
 
-            Log.step("Obtain rewrite lists from %s sources".formatted(rewriteSources.size()));
-            List<HostsOverrideListsLoader.BypassRoute> overrides = overrideListsLoader.fetchWebsites(rewriteSources);
+            Log.step("Use cached rewrite source snapshot from %s sources".formatted(rewriteSources.size()));
+            RedirectSourceSnapshot snapshot = redirectSourceSnapshotProvider.load();
+            List<HostsOverrideListsLoader.BypassRoute> overrides = snapshot.bypassRoutes();
 
             exclusionConfig.ifPresent(config -> Log.common(
                     "Loaded %s NextDNS rewrite exclusion patterns. Existing cleanup: %s"
@@ -79,11 +92,19 @@ public class NextDnsTaskRunner extends DnsTaskRunner {
             ));
 
             Log.step("Prepare rewrites");
-            Map<String, CreateRewriteDto> requests = nextDnsRewriteService.buildNewRewrites(overrides, exclusionMatcher);
+            Map<String, CreateRewriteDto> requests = nextDnsRewriteService.buildNewRewrites(
+                    overrides,
+                    exclusionMatcher,
+                    proxyConfiguration.enabled() ? Optional.of(proxyConfiguration.redirectTarget()) : Optional.empty()
+            );
             List<CreateRewriteDto> createRewriteDtos = nextDnsRewriteService.cleanupOutdatedAndExcluded(
                     requests,
                     exclusionMatcher,
-                    exclusionConfig.map(NextDnsRewriteExclusionConfig::cleanupExisting).orElse(false)
+                    exclusionConfig.map(NextDnsRewriteExclusionConfig::cleanupExisting).orElse(false),
+                    proxyConfiguration.enabled()
+                            ? Optional.of(new NextDnsRewriteService.ProxyRewriteTargets(
+                            proxyConfiguration.redirectTarget(), proxyConfiguration.previousRedirectTargets()))
+                            : Optional.empty()
             );
 
             Log.step("Save rewrites");

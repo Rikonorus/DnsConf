@@ -1,6 +1,7 @@
 package com.novibe.dns.cloudflare.service;
 
 import com.novibe.common.data_sources.HostsOverrideListsLoader;
+import com.novibe.common.exception.ProcessException;
 import com.novibe.common.service.ExcludeRedirectCheckService;
 import com.novibe.common.util.FunctionWrapper;
 import com.novibe.common.util.Log;
@@ -93,7 +94,7 @@ public class ListService {
                 .toList();
 
         if (!errors.isEmpty()) {
-            Log.fail("Failed to remove old lists (%s of %s): %s".formatted(errors.size(), oldIds.size(), errors));
+            throw new ProcessException("Cloudflare failed to remove %s old lists".formatted(errors.size()));
         } else {
             Log.common("\n%s of %s old lists have been removed".formatted(counter, oldIds.size()));
         }
@@ -122,7 +123,7 @@ public class ListService {
         if (errors.isEmpty()) {
             Log.common("\n%s of %s new lists have been saved".formatted(counter, createListRequests.size()));
         } else {
-            Log.fail("Failed to save new lists (%s of %s): %s".formatted(errors.size(), createListRequests.size(), errors));
+            throw new ProcessException("Cloudflare failed to save %s new lists".formatted(errors.size()));
         }
         return result;
     }

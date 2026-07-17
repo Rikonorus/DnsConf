@@ -2,6 +2,7 @@ package com.novibe.dns.cloudflare;
 
 import com.novibe.common.DnsTaskRunner;
 import com.novibe.common.data_sources.HostsOverrideListsLoader.BypassRoute;
+import com.novibe.common.data_sources.RedirectSourceSnapshotProvider;
 import com.novibe.common.util.EnvParser;
 import com.novibe.common.util.Log;
 import com.novibe.dns.cloudflare.http.dto.response.list.GatewayListDto;
@@ -25,6 +26,7 @@ public class CloudflareTaskRunner extends DnsTaskRunner {
 
     private final ListService listService;
     private final RuleService ruleService;
+    private final RedirectSourceSnapshotProvider redirectSourceSnapshotProvider;
 
 
     @Override
@@ -43,7 +45,7 @@ public class CloudflareTaskRunner extends DnsTaskRunner {
 
 
         List<String> blocks = blockListsLoader.fetchWebsites(EnvParser.parse(BLOCK));
-        List<BypassRoute> overrides = overrideListsLoader.fetchWebsites(EnvParser.parse(REDIRECT));
+        List<BypassRoute> overrides = redirectSourceSnapshotProvider.load().bypassRoutes();
 
         Log.step("Remove old rules.");
         List<GatewayRuleDto> gatewayRuleDtos = ruleService.obtainExistingRules();

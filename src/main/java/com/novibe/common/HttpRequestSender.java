@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.novibe.common.base_structures.DnsProfile;
 import com.novibe.common.base_structures.Jsonable;
 import com.novibe.common.exception.DnsHttpError;
-import com.novibe.common.util.Log;
 import lombok.Setter;
 import lombok.SneakyThrows;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.concurrent.Semaphore;
 
 import static java.util.Objects.isNull;
@@ -68,6 +68,7 @@ public abstract class HttpRequestSender {
         }
         semaphore.acquire();
         HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(30))
                 .header(authHeaderName(), authHeaderValue())
                 .header("Content-Type", "application/json")
                 .method(method, requestBody)
@@ -76,7 +77,6 @@ public abstract class HttpRequestSender {
         semaphore.release();
         if (response.statusCode() > 299) {
             DnsHttpError httpError = new DnsHttpError(response, body);
-            Log.fail(httpError.getMessage());
             switch (response.statusCode()) {
                 case 401 -> react401();
                 case 403 -> react403();

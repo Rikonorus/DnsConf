@@ -256,6 +256,30 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 
 Ранее сгенерированные данные удаляются, если не заданы источники **ДЛЯ ОБЕИХ НАСТРОЕК** `BLOCK` и `REDIRECT`.
 
+## Необязательный режим личного VPS-прокси
+
+После provisioning совместимого VPS задайте Secret `REDIRECT_TARGET` с его
+публичным IPv4. Тогда все новые desired NextDNS rewrites из общего снимка
+`REDIRECT` указывают на VPS. Приложение скачивает и разбирает `REDIRECT` ровно
+один раз, до любых мутаций stage-ит exact allowlist на VPS, а commit выполняет
+только после успеха всех настроенных профилей.
+
+В GitHub Environment Secrets (не Variables и не файлы репозитория) нужны:
+`REDIRECT_TARGET`, `PROXY_VPS_ROOT_PASSWORD`, точная out-of-band запись
+`PROXY_VPS_SSH_KNOWN_HOSTS` формата `<VPS_IP> ssh-ed25519 <BASE64_KEY>` и, при
+миграции, CSV `PROXY_PREVIOUS_REDIRECT_TARGETS`. Режим не стартует без
+публичного IPv4, password, совпадающего trusted host key, `REDIRECT` и хотя бы
+одного профиля NextDNS. SSH всегда TCP 22, команда всегда
+`/usr/local/sbin/dnsconf-proxy-allowlist`; пароль не передаётся shell-аргументом,
+а проверка host key происходит до password authentication.
+
+Allowlist содержит точные исходные hostname (включая `www.`) и эффективные
+нормализованные имена, отсортирован, дедуплицирован и не публикуется artifact-ом.
+`EXCLUDE_REDIRECT` и `NEXTDNS_REWRITE_EXCLUSIONS` не вырезают имя из allowlist.
+Для замены VPS добавьте старый IP в `PROXY_PREVIOUS_REDIRECT_TARGETS`, выполните
+один успешный полный sync и только потом удалите его из Secret. Записи с другим
+content не принадлежат proxy-режиму и не удаляются.
+
 ---
 
 ## Проверка через Docker
@@ -327,6 +351,17 @@ https://www.youtube.com/watch?v=vbAXM_xAL5I
 4) Добавьте `AUTH_SECRET` и `CLIENT_ID` в **Environment secrets**
 5) Добавьте `DNS`, `REDIRECT`, `BLOCK`, при необходимости `EXCLUDE_REDIRECT` и `NEXTDNS_REWRITE_EXCLUSIONS` в **Environment variables**
 
+Для режима VPS-прокси оставьте в `REDIRECT` полный GeoHide source и добавьте в тот же Environment `DNS` следующие **Environment secrets**:
+
+- `REDIRECT_TARGET` — текущий публичный IPv4 VPS;
+- `PROXY_VPS_ROOT_PASSWORD` — root-пароль для SSH;
+- `PROXY_VPS_SSH_KNOWN_HOSTS` — точная pinned-строка `<VPS_IP> ssh-ed25519 <BASE64_KEY>`;
+- `PROXY_PREVIOUS_REDIRECT_TARGETS` — только на время миграции VPS, иначе оставить пустым.
+
+VPS уже должен поддерживать contract version `1`. Runner загружает в фиксированный incoming-каталог root-owned regular allowlist-файл с правами `0600`, после чего вызывает только fixed allowlist CLI. Чтобы временно выключить proxy mode, не удаляя credentials, удалите или переименуйте только `REDIRECT_TARGET`: следующий run вернёт прежнее поведение rewrites.
+
+VPS обязан резолвить upstream через независимые публичные resolvers, а не через переписываемый NextDNS profile — иначе получится цикл VPS → VPS. Отдельный DNS daemon не требуется. Схема не является клиентской аутентификацией; защита обеспечивается exact allowlist, silent reject, egress filtering и непубликацией VPS IP.
+
 + **Action** запускается ежедневно в **01:30 UTC** (04:30 по МСК).  
   Чтобы изменить время, отредактируйте cron в `.github/workflows/github_action.yml`
 + **Action** можно запустить вручную через кнопку **Run workflow**:  
@@ -338,3 +373,4 @@ https://www.youtube.com/watch?v=vbAXM_xAL5I
 + Для REDIRECT-only сценария проверьте строку `No block sources provided; skipping denylist update` и убедитесь, что denylist не менялся
 + Если `cleanupExisting=true`, дополнительно проверьте строку `Removing ... excluded rewrites from NextDNS`
 + После успешного run откройте профиль NextDNS и убедитесь, что нужные rewrites появились или обновились, а домены из `NEXTDNS_REWRITE_EXCLUSIONS.patterns` не были созданы заново
++ В proxy mode логи должны содержать count/SHA allowlist, `Stage proxy allowlist`, обновление DNS и `Commit proxy allowlist`, но никогда не target IP, password, known_hosts, remote path или transaction token

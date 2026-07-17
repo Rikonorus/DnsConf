@@ -3,54 +3,96 @@ package com.novibe;
 
 import com.novibe.common.DnsTaskRunner;
 import com.novibe.common.base_structures.DnsProfile;
+import com.novibe.common.data_sources.RedirectSourceSnapshotProvider;
 import com.novibe.common.exception.ProcessException;
+import com.novibe.common.proxy.ProxyConfiguration;
+import com.novibe.common.proxy.ProxySyncCoordinator;
+import com.novibe.common.proxy.SensitiveValueRedactor;
 import com.novibe.common.util.EnvParser;
 import com.novibe.common.util.Log;
+import com.novibe.dns.next_dns.NextDnsTaskRunner;
 import org.jspecify.annotations.NonNull;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.util.List;
-
-import static java.util.Objects.nonNull;
+import java.util.ArrayList;
 
 
 public class App {
 
-    public static ApplicationContext commonContext;
+    public static AnnotationConfigApplicationContext commonContext;
 
-    static void main() {
+    public static void main(String[] args) {
+        int exitCode = 0;
+        List<AnnotationConfigApplicationContext> profileContexts = new ArrayList<>();
+        try {
+            List<DnsProfile> dnsProfiles = EnvParser.parseProfiles();
+            ProxyConfiguration proxyConfiguration = ProxyConfiguration.fromEnvironment(dnsProfiles);
+            SensitiveValueRedactor.configure(proxyConfiguration);
 
-        List<DnsProfile> dnsProfiles = EnvParser.parseProfiles();
+            commonContext = new AnnotationConfigApplicationContext();
+            commonContext.scan("com.novibe.common");
+            commonContext.registerBean(ProxyConfiguration.class, () -> proxyConfiguration);
+            commonContext.refresh();
 
-        String commonsBasePackage = "com.novibe.common";
-        commonContext = new AnnotationConfigApplicationContext(commonsBasePackage);
-        AnnotationConfigApplicationContext currentContext = null;
-        boolean hasErrors = false;
+            for (DnsProfile profile : dnsProfiles) {
+                profileContexts.add(loadProfileContext(profile));
+            }
+            preflightProfileContexts(profileContexts);
 
-        for (DnsProfile dnsProfile : dnsProfiles) {
-            try {
-                currentContext = loadProfileContext(dnsProfile);
+            ProxySyncCoordinator coordinator = commonContext.getBean(ProxySyncCoordinator.class);
+            if (proxyConfiguration.enabled()) {
+                RedirectSourceSnapshotProvider sourceProvider = commonContext.getBean(RedirectSourceSnapshotProvider.class);
+                coordinator.run(proxyConfiguration, sourceProvider.load().allowlist(),
+                        () -> runAllProfilesFailFast(profileContexts));
+            } else {
+                runProfilesIndependently(profileContexts);
+            }
+        } catch (Exception exception) {
+            exitCode = 1;
+            Log.fail(SensitiveValueRedactor.redact(safeMessage(exception)));
+        } finally {
+            for (AnnotationConfigApplicationContext context : profileContexts) {
+                context.close();
+            }
+            if (commonContext != null) commonContext.close();
+        }
+        if (exitCode != 0) System.exit(exitCode);
+    }
 
-                DnsTaskRunner runner = currentContext.getBean(DnsTaskRunner.class);
-                runner.run();
+    private static void runAllProfilesFailFast(List<AnnotationConfigApplicationContext> profileContexts) {
+        for (AnnotationConfigApplicationContext context : profileContexts) {
+            DnsTaskRunner runner = context.getBean(DnsTaskRunner.class);
+            runner.run();
+        }
+    }
 
-            } catch (ProcessException processException) {
-                hasErrors = true;
-                Log.fail("Process Exception on profile " + dnsProfile.number());
-                Log.fail(processException.getMessage());
-            } catch (Exception exception) {
-                hasErrors = true;
-                Log.fail("Unexpected exception on profile " + dnsProfile.number());
-                exception.printStackTrace(System.out);
-            } finally {
-                if (nonNull(currentContext)) currentContext.close();
+    private static void preflightProfileContexts(List<AnnotationConfigApplicationContext> profileContexts) {
+        for (AnnotationConfigApplicationContext context : profileContexts) {
+            DnsTaskRunner runner = context.getBean(DnsTaskRunner.class);
+            if (runner instanceof NextDnsTaskRunner nextDnsTaskRunner) {
+                nextDnsTaskRunner.validateConfiguration();
             }
         }
+    }
 
-        if (hasErrors) {
-            System.exit(1);
+    private static void runProfilesIndependently(List<AnnotationConfigApplicationContext> profileContexts) {
+        ProcessException failure = null;
+        for (AnnotationConfigApplicationContext context : profileContexts) {
+            DnsTaskRunner runner = context.getBean(DnsTaskRunner.class);
+            try {
+                runner.run();
+            } catch (Exception exception) {
+                failure = new ProcessException("DNS profile update failed", exception);
+                Log.fail(SensitiveValueRedactor.redact(safeMessage(exception)));
+            }
         }
+        if (failure != null) throw failure;
+    }
+
+    private static String safeMessage(Exception exception) {
+        String message = exception.getMessage();
+        return message == null || message.isBlank() ? "Application failed" : message;
     }
 
     private static @NonNull AnnotationConfigApplicationContext loadProfileContext(DnsProfile dnsProfile) {

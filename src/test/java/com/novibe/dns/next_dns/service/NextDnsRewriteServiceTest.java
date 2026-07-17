@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -123,6 +124,57 @@ class NextDnsRewriteServiceTest {
         assertEquals(1, createRewriteDtos.size());
         assertEquals("example.com", createRewriteDtos.get(0).name());
         assertEquals("2.2.2.2", createRewriteDtos.get(0).content());
+    }
+
+    @Test
+    void proxyTargetReplacesEveryDesiredRewriteContent() {
+        Map<String, CreateRewriteDto> rewrites = service.buildNewRewrites(
+                List.of(
+                        new HostsOverrideListsLoader.BypassRoute("1.1.1.1", "one.example"),
+                        new HostsOverrideListsLoader.BypassRoute("2.2.2.2", "two.example")
+                ),
+                Optional.empty(),
+                Optional.of("9.9.9.9")
+        );
+
+        assertEquals("9.9.9.9", rewrites.get("one.example").content());
+        assertEquals("9.9.9.9", rewrites.get("two.example").content());
+    }
+
+    @Test
+    void proxyModeDeletesOnlyStaleManagedRewrites() {
+        when(nextDnsRewriteClient.fetchRewrites()).thenReturn(List.of(
+                new RewriteDto("managed", "gone.example", "9.9.9.9"),
+                new RewriteDto("custom", "keep.example", "8.8.8.8")
+        ));
+
+        List<CreateRewriteDto> creates = service.cleanupOutdatedAndExcluded(
+                new HashMap<>(),
+                Optional.empty(),
+                false,
+                Optional.of(new NextDnsRewriteService.ProxyRewriteTargets("9.9.9.9", Set.of("7.7.7.7")))
+        );
+
+        verify(nextDnsRewriteClient).deleteRewriteById("managed");
+        verify(nextDnsRewriteClient, never()).deleteRewriteById("custom");
+        assertTrue(creates.isEmpty());
+    }
+
+    @Test
+    void excludedManagedPreviousTargetMigratesButDoesNotCreateAbsentRewrite() {
+        when(nextDnsRewriteClient.fetchRewrites()).thenReturn(List.of(
+                new RewriteDto("old", "instagram.com", "7.7.7.7")
+        ));
+
+        List<CreateRewriteDto> creates = service.cleanupOutdatedAndExcluded(
+                new HashMap<>(),
+                exclusionMatcher,
+                false,
+                Optional.of(new NextDnsRewriteService.ProxyRewriteTargets("9.9.9.9", Set.of("7.7.7.7")))
+        );
+
+        verify(nextDnsRewriteClient).deleteRewriteById("old");
+        assertEquals(List.of(new CreateRewriteDto("instagram.com", "9.9.9.9")), creates);
     }
 
     private List<HostsOverrideListsLoader.BypassRoute> loadRepresentativeOverrides() throws Exception {

@@ -227,6 +227,48 @@ For `NEXTDNS_REWRITE_EXCLUSIONS`:
 
 Previously generated data is removed **ONLY** when both `BLOCK` and `REDIRECT` sources were not provided.
 
+## Optional personal VPS proxy mode
+
+Set `REDIRECT_TARGET` to a public IPv4 address only after the compatible
+`dnsconf-proxy-allowlist` contract has been provisioned on that VPS. This turns
+every newly desired NextDNS rewrite from the `REDIRECT` snapshot into that VPS
+address. The runner downloads and parses `REDIRECT` once, creates an exact
+ASCII/IDNA allowlist from the same snapshot, stages it on the VPS before any
+provider mutation, and commits it only after every configured profile succeeds.
+
+The following values are **GitHub Environment Secrets**, never variables or
+repository files:
+
+- `REDIRECT_TARGET` — the current public VPS IPv4 address;
+- `PROXY_VPS_ROOT_PASSWORD` — root password used only by the in-process SSH client;
+- `PROXY_VPS_SSH_KNOWN_HOSTS` — exactly `<VPS_IP> ssh-ed25519 <BASE64_KEY>` obtained out-of-band;
+- `PROXY_PREVIOUS_REDIRECT_TARGETS` — optional comma-separated former VPS IPv4 addresses during migration.
+
+Proxy mode refuses to start without a public IPv4 target, password, matching
+trusted host-key entry, a `REDIRECT` source, and at least one NextDNS profile.
+The SSH port and command are fixed to TCP 22 and
+`/usr/local/sbin/dnsconf-proxy-allowlist`; no password is passed as a shell
+argument and host-key verification happens before password authentication.
+
+The allowlist contains exact source hostnames, including `www.`, and their
+effective normalized rewrite hostname. It is sorted, deduplicated, newline
+terminated and never published as an artifact. `EXCLUDE_REDIRECT` and
+`NEXTDNS_REWRITE_EXCLUSIONS` affect rewrite creation/cleanup only; they do not
+remove a source hostname from the proxy allowlist.
+
+### VPS migration and stale rewrites
+
+During a VPS replacement, add the former address to
+`PROXY_PREVIOUS_REDIRECT_TARGETS`, set the new `REDIRECT_TARGET`, and wait for
+one complete successful run. Rewrites pointing to the current or an explicitly
+listed former target are proxy-managed: stale source domains are removed and
+excluded existing records are migrated from a previous target to the current
+one when `cleanupExisting=false`. Rewrites pointing elsewhere are left alone.
+After confirming that no NextDNS rewrite uses the old address, remove it from
+the previous-target secret. Do not use a limited-source canary against a main
+profile because stale cleanup is intentional; use a separate profile or a fake
+test instead.
+
 ## Docker-based validation
 
 You do not need Java or Maven on the host machine.
@@ -294,6 +336,17 @@ Important:
 4) Provide `AUTH_SECRET` and `CLIENT_ID` to **Environment secrets**
 5) Provide `DNS`, `REDIRECT`, `BLOCK`, optional `EXCLUDE_REDIRECT` and optional `NEXTDNS_REWRITE_EXCLUSIONS` to **Environment variables**
 
+For the optional VPS proxy mode, keep `REDIRECT` as the full GeoHide source and add these **Environment secrets** to the same `DNS` environment:
+
+- `REDIRECT_TARGET` — current public VPS IPv4;
+- `PROXY_VPS_ROOT_PASSWORD` — root SSH password;
+- `PROXY_VPS_SSH_KNOWN_HOSTS` — exact pinned `<VPS_IP> ssh-ed25519 <BASE64_KEY>` entry;
+- `PROXY_PREVIOUS_REDIRECT_TARGETS` — only during a VPS migration; otherwise leave empty.
+
+The VPS must already expose contract version `1`. The runner uploads a root-owned regular allowlist file with mode `0600` into the fixed incoming directory, then invokes only the fixed allowlist CLI. To disable proxy mode without deleting its credentials, remove or rename only `REDIRECT_TARGET`; the next run restores the legacy rewrite target behaviour.
+
+The VPS must resolve upstream domains through independent public resolvers, never through the rewritten NextDNS profile: otherwise its requests loop back to itself. No separate DNS daemon is needed. This design is not client authentication; protection is exact allowlisting, silent reject, egress filtering, and avoiding publication of the VPS IP.
+
 + The action will be launched every day at **01:30 UTC**. To set another time, change cron at `.github/workflows/github_action.yml`
 + You can run the action manually via `Run workflow` button: switch to _Actions_ tab and choose workflow named **DNS Block&Redirect Configurer cron task**
 
@@ -303,3 +356,4 @@ Important:
 - For a REDIRECT-only setup, verify the `No block sources provided; skipping denylist update` log entry and confirm that the denylist was left untouched
 - If `cleanupExisting=true`, also verify the `Removing ... excluded rewrites from NextDNS` log entry
 - After a successful run, open the target NextDNS profile and confirm that the expected rewrites were created or updated, while domains matched by `NEXTDNS_REWRITE_EXCLUSIONS.patterns` were not recreated
+- In proxy mode, logs must show the allowlist count/SHA, `Stage proxy allowlist`, DNS updates, and `Commit proxy allowlist`; they must never show the target IP, password, known_hosts line, remote path, or transaction token

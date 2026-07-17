@@ -1,6 +1,7 @@
 package com.novibe.dns.next_dns.http;
 
 import com.novibe.common.exception.DnsHttpError;
+import com.novibe.common.exception.ProcessException;
 import com.novibe.common.util.Log;
 import com.novibe.dns.next_dns.http.dto.response.NextDnsResponse;
 import lombok.SneakyThrows;
@@ -13,8 +14,6 @@ import java.util.List;
 import java.util.Queue;
 import java.util.function.Function;
 
-import static java.util.Optional.ofNullable;
-
 @UtilityClass
 public class NextDnsRateLimitedApiProcessor {
 
@@ -23,20 +22,24 @@ public class NextDnsRateLimitedApiProcessor {
     public <D, R extends NextDnsResponse<?>> void callApi(List<D> requestList, Function<D, R> request) {
         int waitSeconds = 60;
         Queue<D> requestQueue = new ArrayDeque<>(requestList);
+        int retryCounter = 0;
         int successCounter = 0;
         int waveCounter = 0;
         while (!requestQueue.isEmpty()) {
             D requestDto = requestQueue.poll();
             try {
                 R response = request.apply(requestDto);
-                if (ofNullable(response).map(r -> r.getErrors()).isPresent()) {
-                    Log.fail("Failed request: " + response.getErrors());
+                if (response != null && response.getErrors() != null && !response.getErrors().isEmpty()) {
+                    throw new ProcessException("NextDNS returned an API error");
                 } else {
                     Log.progress("Current success progress: " + ++successCounter + "/" + requestList.size());
                     waveCounter++;
                 }
             } catch (DnsHttpError e) {
                 if (e.getCode() == 524 || e.getCode() == 429) {
+                    if (++retryCounter > 3) {
+                        throw new ProcessException("NextDNS rate-limit retry budget was exhausted", e);
+                    }
                     requestQueue.add(requestDto);
                     Log.common("Sending speed: %s requests per second"
                             .formatted((double) waveCounter / 60));
@@ -45,8 +48,7 @@ public class NextDnsRateLimitedApiProcessor {
                     Log.io("Continue...");
                     waveCounter = 0;
                 } else {
-                    Log.fail(e.toString());
-                    System.exit(1);
+                    throw new ProcessException("NextDNS request failed with HTTP " + e.getCode(), e);
                 }
             }
         }

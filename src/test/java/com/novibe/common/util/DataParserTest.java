@@ -32,4 +32,17 @@ class DataParserTest {
     void hasMeaningfulContentIgnoresCommentOnlyLines() {
         assertFalse(DataParser.hasMeaningfulContent("   # only a comment"));
     }
+
+    @Test
+    void normalizesUnicodeUppercaseAndTrailingDotIndependentOfDefaultLocale() {
+        assertEquals("www.xn--bcher-kva.example", DataParser.normalizeHostname("WWW.B\u00dcCHER.Example."));
+    }
+
+    @Test
+    void rejectsUrlIpWildcardAndPortAsHostname() {
+        assertEquals(null, DataParser.normalizeHostname("https://example.com"));
+        assertEquals(null, DataParser.normalizeHostname("127.0.0.1"));
+        assertEquals(null, DataParser.normalizeHostname("*.example.com"));
+        assertEquals(null, DataParser.normalizeHostname("example.com:443"));
+    }
 }

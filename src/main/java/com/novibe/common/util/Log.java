@@ -1,29 +1,35 @@
 package com.novibe.common.util;
 
+import com.novibe.common.proxy.SensitiveValueRedactor;
+
 public class Log {
 
     public static void global(String msg) {
-        IO.println(Color.YELLOW_BOLD + "\n#==#==# " + Color.GREEN_BOLD + msg + Color.YELLOW_BOLD + " #==#==#\n" + Color.RESET);
+        IO.println(Color.YELLOW_BOLD + "\n#==#==# " + Color.GREEN_BOLD + safe(msg) + Color.YELLOW_BOLD + " #==#==#\n" + Color.RESET);
     }
 
     public static void step(String msg) {
-        IO.println(Color.BLUE_BOLD + "\n--- " + msg + Color.RESET);
+        IO.println(Color.BLUE_BOLD + "\n--- " + safe(msg) + Color.RESET);
     }
 
     public static void io(String msg) {
-        IO.println(Color.YELLOW + ">>> " + Color.PURPLE + msg + Color.RESET);
+        IO.println(Color.YELLOW + ">>> " + Color.PURPLE + safe(msg) + Color.RESET);
     }
 
     public static void fail(String msg) {
-        IO.println("\n" + Color.YELLOW_BOLD + "!!!" + Color.RED + " " + msg + Color.RESET);
+        IO.println("\n" + Color.YELLOW_BOLD + "!!!" + Color.RED + " " + safe(msg) + Color.RESET);
     }
 
     public static void common(String msg) {
-        IO.println(msg);
+        IO.println(safe(msg));
     }
 
     public static void progress(String msg) {
-        IO.print(msg + "\r");
+        IO.print(safe(msg) + "\r");
+    }
+
+    private static String safe(String message) {
+        return SensitiveValueRedactor.redact(message);
     }
 
     private static class Color {
