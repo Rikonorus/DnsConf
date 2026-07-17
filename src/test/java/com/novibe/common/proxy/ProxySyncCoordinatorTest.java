@@ -5,9 +5,11 @@ import com.novibe.common.data_sources.RedirectSourceSnapshot.ProxyAllowlist;
 import com.novibe.common.exception.ProcessException;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,17 +33,53 @@ class ProxySyncCoordinatorTest {
     }
 
     @Test
-    void abortsStagedTransactionWhenProviderFails() {
+    void abortsStagedTransactionWhenRateLimitDeadlinePreventsCompletion() {
         assertThrows(ProcessException.class, () -> coordinator.run(configuration, allowlist, () -> {
             client.events.add("providers");
-            throw new ProcessException("provider failed");
+            throw new ProcessException("NextDNS rate-limit deadline exceeded");
         }));
 
         assertEquals(List.of("version", "stage", "renew", "providers", "abort"), client.events);
     }
 
+    @Test
+    void renewsTheLeasePeriodicallyWhileProviderUpdatesAreStillRunning() throws Exception {
+        RecordingClient shortLeaseClient = new RecordingClient();
+        ProxySyncCoordinator shortLeaseCoordinator = new ProxySyncCoordinator(
+                shortLeaseClient, java.time.Duration.ofSeconds(1), java.time.Duration.ofMillis(10)
+        );
+        CountDownLatch providerStarted = new CountDownLatch(1);
+        CountDownLatch finishProvider = new CountDownLatch(1);
+
+        Thread run = Thread.ofVirtual().start(() -> shortLeaseCoordinator.run(configuration, allowlist, () -> {
+            shortLeaseClient.events.add("providers");
+            providerStarted.countDown();
+            finishProvider.await();
+        }));
+
+        org.junit.jupiter.api.Assertions.assertTrue(providerStarted.await(1, TimeUnit.SECONDS));
+        awaitRenewalCount(shortLeaseClient, 2);
+        finishProvider.countDown();
+        run.join(1_000);
+
+        org.junit.jupiter.api.Assertions.assertFalse(run.isAlive());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                shortLeaseClient.events.stream().filter("renew"::equals).count() >= 3
+        );
+        assertEquals("commit", shortLeaseClient.events.getLast());
+    }
+
+    private void awaitRenewalCount(RecordingClient client, int count) throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+        while (System.nanoTime() < deadlineNanos) {
+            if (client.events.stream().filter("renew"::equals).count() >= count) return;
+            Thread.sleep(5);
+        }
+        throw new AssertionError("Expected periodic proxy lease renewal");
+    }
+
     private static class RecordingClient implements ProxySyncClient {
-        private final List<String> events = new ArrayList<>();
+        private final List<String> events = new CopyOnWriteArrayList<>();
 
         @Override
         public void verifyCompatibleContract(ProxyConfiguration configuration) {

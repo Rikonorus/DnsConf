@@ -3,7 +3,7 @@ package com.novibe.common.proxy;
 import com.novibe.common.data_sources.RedirectSourceSnapshot.ProxyAllowlist;
 import com.novibe.common.exception.ProcessException;
 import com.novibe.common.util.Log;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -15,12 +15,29 @@ import java.util.concurrent.TimeoutException;
 
 /** Owns the stage -> provider updates -> commit transaction boundary. */
 @Service
-@RequiredArgsConstructor
 public class ProxySyncCoordinator {
 
-    private static final Duration PROVIDER_PHASE_TIMEOUT = Duration.ofMinutes(15);
+    private static final Duration PROVIDER_PHASE_TIMEOUT = Duration.ofMinutes(65);
+    private static final Duration LEASE_RENEW_INTERVAL = Duration.ofMinutes(5);
 
     private final ProxySyncClient proxySyncClient;
+    private final Duration providerPhaseTimeout;
+    private final Duration leaseRenewInterval;
+
+    @Autowired
+    public ProxySyncCoordinator(ProxySyncClient proxySyncClient) {
+        this(proxySyncClient, PROVIDER_PHASE_TIMEOUT, LEASE_RENEW_INTERVAL);
+    }
+
+    ProxySyncCoordinator(
+            ProxySyncClient proxySyncClient,
+            Duration providerPhaseTimeout,
+            Duration leaseRenewInterval
+    ) {
+        this.proxySyncClient = proxySyncClient;
+        this.providerPhaseTimeout = providerPhaseTimeout;
+        this.leaseRenewInterval = leaseRenewInterval;
+    }
 
     public void run(ProxyConfiguration configuration, ProxyAllowlist allowlist, ThrowingWork providerUpdates) {
         if (!configuration.enabled()) {
@@ -42,7 +59,7 @@ public class ProxySyncCoordinator {
             proxySyncClient.renew(configuration, transaction);
 
             Log.step("Update DNS profiles");
-            runProviderUpdates(providerUpdates);
+            runProviderUpdates(configuration, transaction, providerUpdates);
 
             proxySyncClient.renew(configuration, transaction);
             Log.step("Commit proxy allowlist");
@@ -71,17 +88,54 @@ public class ProxySyncCoordinator {
         }
     }
 
-    private void runProviderUpdates(ThrowingWork providerUpdates) throws Exception {
+    private void runProviderUpdates(
+            ProxyConfiguration configuration,
+            ProxySyncClient.Transaction transaction,
+            ThrowingWork providerUpdates
+    ) throws Exception {
         try (ExecutorService executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             Future<?> future = executor.submit(() -> {
                 providerUpdates.run();
                 return null;
             });
+            long deadlineNanos = System.nanoTime() + providerPhaseTimeout.toNanos();
+            long nextRenewNanos = System.nanoTime() + leaseRenewInterval.toNanos();
             try {
-                future.get(PROVIDER_PHASE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
-            } catch (TimeoutException exception) {
-                future.cancel(true);
-                throw new ProcessException("DNS provider phase exceeded its timeout", exception);
+                while (true) {
+                    long now = System.nanoTime();
+                    long remainingToDeadline = deadlineNanos - now;
+                    if (remainingToDeadline <= 0) {
+                        future.cancel(true);
+                        throw new ProcessException("DNS provider phase exceeded its timeout");
+                    }
+                    if (nextRenewNanos <= now) {
+                        try {
+                            proxySyncClient.renew(configuration, transaction);
+                        } catch (Exception renewalFailure) {
+                            future.cancel(true);
+                            throw renewalFailure;
+                        }
+                        nextRenewNanos = System.nanoTime() + leaseRenewInterval.toNanos();
+                        continue;
+                    }
+                    long waitNanos = Math.min(remainingToDeadline, nextRenewNanos - now);
+                    try {
+                        future.get(waitNanos, TimeUnit.NANOSECONDS);
+                        return;
+                    } catch (TimeoutException exception) {
+                        if (System.nanoTime() >= deadlineNanos) {
+                            future.cancel(true);
+                            throw new ProcessException("DNS provider phase exceeded its timeout");
+                        }
+                        try {
+                            proxySyncClient.renew(configuration, transaction);
+                        } catch (Exception renewalFailure) {
+                            future.cancel(true);
+                            throw renewalFailure;
+                        }
+                        nextRenewNanos = System.nanoTime() + leaseRenewInterval.toNanos();
+                    }
+                }
             } catch (ExecutionException exception) {
                 Throwable cause = exception.getCause();
                 if (cause instanceof Exception wrapped) throw wrapped;

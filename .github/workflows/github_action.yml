@@ -13,7 +13,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     environment: DNS
-    timeout-minutes: 25
+    timeout-minutes: 75
 
     env:
       DNS: ${{ vars.DNS }}
