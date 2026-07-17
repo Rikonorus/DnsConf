@@ -23,6 +23,8 @@ import java.time.Duration;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
 
 /** Direct SSH/SFTP implementation of the fixed VPS allowlist contract. */
@@ -36,6 +38,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
     private static final int ROOT_UID = 0;
     private static final int OWNER_READ_WRITE = 0600;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration HOST_KEY_POLL_INTERVAL = Duration.ofMillis(25);
     private static final Duration AUTH_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(30);
     private static final Pattern TOKEN = Pattern.compile("[0-9a-fA-F]{64}");
@@ -223,11 +226,13 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
             ClientSession session = client.connect(USER, configuration.redirectTarget(), SSH_PORT)
                     .verify(CONNECT_TIMEOUT)
                     .getSession();
-            if (hostKeyStatus.get() != HostKeyVerificationStatus.VERIFIED) {
+            try {
+                requireVerifiedHostKey(session, hostKeyStatus);
+                return session;
+            } catch (ProcessException exception) {
                 session.close(false);
-                throw new ProcessException("Proxy SSH host-key mismatch failed (HostKeyNotVerified)");
+                throw exception;
             }
-            return session;
         } catch (ProcessException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -235,6 +240,65 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
                     ? SshFailureCategory.HOST_KEY_MISMATCH
                     : SshFailureCategory.CONNECT;
             throw sshFailure(category, exception);
+        }
+    }
+
+    private void requireVerifiedHostKey(
+            ClientSession session,
+            AtomicReference<HostKeyVerificationStatus> hostKeyStatus
+    ) {
+        HostKeyVerificationWaitResult result = awaitHostKeyVerification(
+                hostKeyStatus,
+                () -> !session.isClosing() && !session.isClosed(),
+                CONNECT_TIMEOUT,
+                HOST_KEY_POLL_INTERVAL,
+                System::nanoTime,
+                Thread::sleep
+        );
+        switch (result) {
+            case VERIFIED -> {
+                return;
+            }
+            case REJECTED -> throw new ProcessException("Proxy SSH host-key mismatch failed (HostKeyRejected)");
+            case SESSION_CLOSED -> throw new ProcessException("Proxy SSH host-key verification failed (ConnectionClosed)");
+            case TIMED_OUT -> throw new ProcessException("Proxy SSH host-key verification timeout");
+            case INTERRUPTED -> {
+                Thread.currentThread().interrupt();
+                throw new ProcessException("Proxy SSH host-key verification interrupted");
+            }
+        }
+    }
+
+    static HostKeyVerificationWaitResult awaitHostKeyVerification(
+            AtomicReference<HostKeyVerificationStatus> hostKeyStatus,
+            BooleanSupplier sessionOpen,
+            Duration timeout,
+            Duration pollInterval,
+            LongSupplier nanoTime,
+            DurationSleeper sleeper
+    ) {
+        long deadline = nanoTime.getAsLong() + timeout.toNanos();
+        while (true) {
+            switch (hostKeyStatus.get()) {
+                case VERIFIED:
+                    return HostKeyVerificationWaitResult.VERIFIED;
+                case REJECTED:
+                    return HostKeyVerificationWaitResult.REJECTED;
+                case NOT_VERIFIED:
+                    break;
+            }
+            if (!sessionOpen.getAsBoolean()) {
+                return HostKeyVerificationWaitResult.SESSION_CLOSED;
+            }
+            long remainingNanos = deadline - nanoTime.getAsLong();
+            if (remainingNanos <= 0) {
+                return HostKeyVerificationWaitResult.TIMED_OUT;
+            }
+            try {
+                sleeper.sleep(Duration.ofNanos(Math.min(remainingNanos, pollInterval.toNanos())));
+            } catch (InterruptedException exception) {
+                return HostKeyVerificationWaitResult.INTERRUPTED;
+            }
         }
     }
 
@@ -311,6 +375,19 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
         NOT_VERIFIED,
         VERIFIED,
         REJECTED
+    }
+
+    enum HostKeyVerificationWaitResult {
+        VERIFIED,
+        REJECTED,
+        SESSION_CLOSED,
+        TIMED_OUT,
+        INTERRUPTED
+    }
+
+    @FunctionalInterface
+    interface DurationSleeper {
+        void sleep(Duration duration) throws InterruptedException;
     }
 
     @FunctionalInterface

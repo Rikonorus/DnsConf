@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
@@ -148,5 +150,46 @@ class ApacheSshProxySyncClientTest {
 
         assertFalse(accepted);
         assertEquals(ApacheSshProxySyncClient.HostKeyVerificationStatus.REJECTED, status.get());
+    }
+
+    @Test
+    void waitsForAnAsynchronousPinnedHostKeyCallbackBeforeClassifyingItAsMismatch() {
+        AtomicReference<ApacheSshProxySyncClient.HostKeyVerificationStatus> status = new AtomicReference<>(
+                ApacheSshProxySyncClient.HostKeyVerificationStatus.NOT_VERIFIED
+        );
+        AtomicLong nanoseconds = new AtomicLong();
+
+        ApacheSshProxySyncClient.HostKeyVerificationWaitResult result = ApacheSshProxySyncClient.awaitHostKeyVerification(
+                status,
+                () -> true,
+                Duration.ofSeconds(1),
+                Duration.ofMillis(10),
+                nanoseconds::get,
+                pause -> {
+                    nanoseconds.addAndGet(pause.toNanos());
+                    status.set(ApacheSshProxySyncClient.HostKeyVerificationStatus.VERIFIED);
+                }
+        );
+
+        assertEquals(ApacheSshProxySyncClient.HostKeyVerificationWaitResult.VERIFIED, result);
+    }
+
+    @Test
+    void reportsHostKeyVerificationTimeoutOnlyAfterTheBoundedWaitExpires() {
+        AtomicReference<ApacheSshProxySyncClient.HostKeyVerificationStatus> status = new AtomicReference<>(
+                ApacheSshProxySyncClient.HostKeyVerificationStatus.NOT_VERIFIED
+        );
+        AtomicLong nanoseconds = new AtomicLong();
+
+        ApacheSshProxySyncClient.HostKeyVerificationWaitResult result = ApacheSshProxySyncClient.awaitHostKeyVerification(
+                status,
+                () -> true,
+                Duration.ofMillis(10),
+                Duration.ofMillis(5),
+                nanoseconds::get,
+                pause -> nanoseconds.addAndGet(pause.toNanos())
+        );
+
+        assertEquals(ApacheSshProxySyncClient.HostKeyVerificationWaitResult.TIMED_OUT, result);
     }
 }
