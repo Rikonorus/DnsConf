@@ -9,6 +9,7 @@ import org.apache.sshd.client.keyverifier.KnownHostsServerKeyVerifier;
 import org.apache.sshd.client.keyverifier.RejectAllServerKeyVerifier;
 import org.apache.sshd.client.keyverifier.ServerKeyVerifier;
 import org.apache.sshd.client.session.ClientSession;
+import org.apache.sshd.common.signature.BuiltinSignatures;
 import org.apache.sshd.sftp.client.SftpClient;
 import org.apache.sshd.sftp.client.SftpClientFactory;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.time.Duration;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -187,6 +189,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
                 KnownHostsServerKeyVerifier knownHostsVerifier = new KnownHostsServerKeyVerifier(
                         RejectAllServerKeyVerifier.INSTANCE, knownHostsFile
                 );
+                configureStrictPinnedHostKeyAlgorithm(client);
                 client.setServerKeyVerifier(trackingPinnedVerifier(knownHostsVerifier, hostKeyStatus));
                 client.start();
                 try (ClientSession session = connect(client, configuration, hostKeyStatus)) {
@@ -326,6 +329,13 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
                 throw exception;
             }
         };
+    }
+
+    static void configureStrictPinnedHostKeyAlgorithm(SshClient client) {
+        if (!BuiltinSignatures.ed25519.isSupported()) {
+            throw new ProcessException("Proxy SSH ssh-ed25519 support is unavailable");
+        }
+        client.setSignatureFactories(List.of(BuiltinSignatures.ed25519));
     }
 
     private Path writeKnownHosts(String knownHosts) throws IOException {

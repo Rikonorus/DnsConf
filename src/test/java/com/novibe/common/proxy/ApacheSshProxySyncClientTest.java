@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -103,6 +104,18 @@ class ApacheSshProxySyncClientTest {
             assertTrue(BuiltinSignatures.ed25519.isSupported());
             assertTrue(client.getSignatureFactories().stream()
                     .anyMatch(factory -> "ssh-ed25519".equals(factory.getName())));
+        }
+    }
+
+    @Test
+    void strictPinnedClientAdvertisesOnlySshEd25519ForServerHostKeyNegotiation() throws Exception {
+        try (SshClient client = SshClient.setUpDefaultClient()) {
+            ApacheSshProxySyncClient.configureStrictPinnedHostKeyAlgorithm(client);
+            client.start();
+
+            assertEquals(List.of("ssh-ed25519"), client.getSignatureFactories().stream()
+                    .map(factory -> factory.getName())
+                    .toList());
         }
     }
 
