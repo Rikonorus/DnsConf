@@ -84,7 +84,9 @@ public class NextDnsTaskRunner extends DnsTaskRunner {
 
             Log.step("Use cached rewrite source snapshot from %s sources".formatted(rewriteSources.size()));
             RedirectSourceSnapshot snapshot = redirectSourceSnapshotProvider.load();
-            List<HostsOverrideListsLoader.BypassRoute> overrides = snapshot.bypassRoutes();
+            List<HostsOverrideListsLoader.BypassRoute> overrides = proxyConfiguration.enabled()
+                    ? snapshot.proxyBypassRoutes()
+                    : snapshot.bypassRoutes();
 
             exclusionConfig.ifPresent(config -> Log.common(
                     "Loaded %s NextDNS rewrite exclusion patterns. Existing cleanup: %s"

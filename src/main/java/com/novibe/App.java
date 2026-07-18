@@ -43,7 +43,7 @@ public class App {
             ProxySyncCoordinator coordinator = commonContext.getBean(ProxySyncCoordinator.class);
             if (proxyConfiguration.enabled()) {
                 RedirectSourceSnapshotProvider sourceProvider = commonContext.getBean(RedirectSourceSnapshotProvider.class);
-                coordinator.run(proxyConfiguration, sourceProvider.load().allowlist(),
+                coordinator.run(proxyConfiguration, sourceProvider.load().proxyAllowlist(),
                         () -> runAllProfilesFailFast(profileContexts));
             } else {
                 runProfilesIndependently(profileContexts);

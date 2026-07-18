@@ -45,7 +45,7 @@ public class ProxySyncCoordinator {
             return;
         }
 
-        Log.common("Prepared %s exact proxy allowlist domains (SHA-256 %s)".formatted(
+        Log.common("Prepared %s proxy route roots (SHA-256 %s)".formatted(
                 allowlist.domains().size(), allowlist.sha256()
         ));
         Log.step("Verify proxy allowlist contract");

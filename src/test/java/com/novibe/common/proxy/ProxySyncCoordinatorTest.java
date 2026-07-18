@@ -23,7 +23,7 @@ class ProxySyncCoordinatorTest {
     );
     private final ProxyAllowlist allowlist = new RedirectSourceSnapshot(List.of(
             new com.novibe.common.data_sources.RedirectSourceRecord("1.1.1.1", "example.com", "example.com")
-    ), 0).allowlist();
+    ), 0).proxyAllowlist();
 
     @Test
     void stagesBeforeProviderMutationsAndCommitsAfterSuccess() {

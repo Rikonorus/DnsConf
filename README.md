@@ -232,8 +232,8 @@ Previously generated data is removed **ONLY** when both `BLOCK` and `REDIRECT` s
 Set `REDIRECT_TARGET` to a public IPv4 address only after the compatible
 `dnsconf-proxy-allowlist` contract has been provisioned on that VPS. This turns
 every newly desired NextDNS rewrite from the `REDIRECT` snapshot into that VPS
-address. The runner downloads and parses `REDIRECT` once, creates an exact
-ASCII/IDNA allowlist from the same snapshot, stages it on the VPS before any
+address. The runner downloads and parses `REDIRECT` once, creates a compact
+ASCII/IDNA root allowlist from the same snapshot, stages it on the VPS before any
 provider mutation, and commits it only after every configured profile succeeds.
 
 The following values are **GitHub Environment Secrets**, never variables or
@@ -250,11 +250,18 @@ The SSH port and command are fixed to TCP 22 and
 `/usr/local/sbin/dnsconf-proxy-allowlist`; no password is passed as a shell
 argument and host-key verification happens before password authentication.
 
-The allowlist contains exact source hostnames, including `www.`, and their
-effective normalized rewrite hostname. It is sorted, deduplicated, newline
-terminated and never published as an artifact. `EXCLUDE_REDIRECT` and
-`NEXTDNS_REWRITE_EXCLUSIONS` affect rewrite creation/cleanup only; they do not
-remove a source hostname from the proxy allowlist.
+In proxy mode, each hostname is reduced to its registrable root (eTLD+1) using
+Guava's Public Suffix List, including private suffix rules. The reduction is
+applied only when that root is itself explicitly present in the same source
+snapshot. Thus `api.us.elevenlabs.io` becomes `elevenlabs.io`, while a lone
+shared-CDN hostname is not widened to the CDN operator's root. NextDNS receives
+one rewrite per resulting route root; HAProxy contract v2 permits that root and
+its dot-delimited subdomains, then resolves the actual requested SNI/Host.
+
+The root allowlist is sorted, deduplicated, newline terminated and never
+published as an artifact. In proxy mode, exclusions must target the whole routed
+root (for example `*.instagram.com`); a child-only exclusion cannot override a
+parent rewrite inherited by NextDNS.
 
 ### VPS migration and stale rewrites
 
@@ -343,9 +350,9 @@ For the optional VPS proxy mode, keep `REDIRECT` as the full GeoHide source and 
 - `PROXY_VPS_SSH_KNOWN_HOSTS` — exact pinned `<VPS_IP> ssh-ed25519 <BASE64_KEY>` entry;
 - `PROXY_PREVIOUS_REDIRECT_TARGETS` — only during a VPS migration; otherwise leave empty.
 
-The VPS must already expose contract version `1`. The runner uploads a root-owned regular allowlist file with mode `0600` into the fixed incoming directory, then invokes only the fixed allowlist CLI. To disable proxy mode without deleting its credentials, remove or rename only `REDIRECT_TARGET`; the next run restores the legacy rewrite target behaviour.
+The VPS must already expose contract version `2`. The runner uploads a root-owned regular allowlist file with mode `0600` into the fixed incoming directory, then invokes only the fixed allowlist CLI. To disable proxy mode without deleting its credentials, remove or rename only `REDIRECT_TARGET`; the next run restores the legacy rewrite target behaviour.
 
-The VPS must resolve upstream domains through independent public resolvers, never through the rewritten NextDNS profile: otherwise its requests loop back to itself. No separate DNS daemon is needed. This design is not client authentication; protection is exact allowlisting, silent reject, egress filtering, and avoiding publication of the VPS IP.
+The VPS must resolve upstream domains through independent public resolvers, never through the rewritten NextDNS profile: otherwise its requests loop back to itself. No separate DNS daemon is needed. This design is not client authentication; protection is root allowlisting with dot-boundary suffix checks, fail-closed rejection, egress filtering, and avoiding publication of the VPS IP.
 
 + The action will be launched every day at **01:30 UTC**. To set another time, change cron at `.github/workflows/github_action.yml`
 + You can run the action manually via `Run workflow` button: switch to _Actions_ tab and choose workflow named **DNS Block&Redirect Configurer cron task**

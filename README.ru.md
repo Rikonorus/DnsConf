@@ -261,7 +261,7 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 После provisioning совместимого VPS задайте Secret `REDIRECT_TARGET` с его
 публичным IPv4. Тогда все новые desired NextDNS rewrites из общего снимка
 `REDIRECT` указывают на VPS. Приложение скачивает и разбирает `REDIRECT` ровно
-один раз, до любых мутаций stage-ит exact allowlist на VPS, а commit выполняет
+один раз, до любых мутаций stage-ит компактный root allowlist на VPS, а commit выполняет
 только после успеха всех настроенных профилей.
 
 В GitHub Environment Secrets (не Variables и не файлы репозитория) нужны:
@@ -273,9 +273,17 @@ https://raw.githubusercontent.com/Internet-Helper/GeoHideDNS/refs/heads/main/hos
 `/usr/local/sbin/dnsconf-proxy-allowlist`; пароль не передаётся shell-аргументом,
 а проверка host key происходит до password authentication.
 
-Allowlist содержит точные исходные hostname (включая `www.`) и эффективные
-нормализованные имена, отсортирован, дедуплицирован и не публикуется artifact-ом.
-`EXCLUDE_REDIRECT` и `NEXTDNS_REWRITE_EXCLUSIONS` не вырезают имя из allowlist.
+В proxy mode каждый hostname сворачивается до регистрируемого корня (eTLD+1)
+через Public Suffix List из Guava, включая PRIVATE-правила. Сворачивание
+применяется только если сам корень явно присутствует в том же snapshot. Поэтому
+`api.us.elevenlabs.io` превращается в `elevenlabs.io`, а одиночный hostname общей
+CDN не расширяется до корня оператора CDN. NextDNS получает один rewrite на
+получившийся корень, а HAProxy contract v2 разрешает этот корень и его поддомены
+по границе точки, после чего резолвит фактический SNI/Host запроса.
+
+Root allowlist отсортирован, дедуплицирован и не публикуется artifact-ом. В proxy
+mode исключать нужно весь маршрутизируемый корень, например `*.instagram.com`:
+исключение одного дочернего hostname не может переопределить parent rewrite NextDNS.
 Для замены VPS добавьте старый IP в `PROXY_PREVIOUS_REDIRECT_TARGETS`, выполните
 один успешный полный sync и только потом удалите его из Secret. Записи с другим
 content не принадлежат proxy-режиму и не удаляются.
@@ -358,9 +366,9 @@ https://www.youtube.com/watch?v=vbAXM_xAL5I
 - `PROXY_VPS_SSH_KNOWN_HOSTS` — точная pinned-строка `<VPS_IP> ssh-ed25519 <BASE64_KEY>`;
 - `PROXY_PREVIOUS_REDIRECT_TARGETS` — только на время миграции VPS, иначе оставить пустым.
 
-VPS уже должен поддерживать contract version `1`. Runner загружает в фиксированный incoming-каталог root-owned regular allowlist-файл с правами `0600`, после чего вызывает только fixed allowlist CLI. Чтобы временно выключить proxy mode, не удаляя credentials, удалите или переименуйте только `REDIRECT_TARGET`: следующий run вернёт прежнее поведение rewrites.
+VPS уже должен поддерживать contract version `2`. Runner загружает в фиксированный incoming-каталог root-owned regular allowlist-файл с правами `0600`, после чего вызывает только fixed allowlist CLI. Чтобы временно выключить proxy mode, не удаляя credentials, удалите или переименуйте только `REDIRECT_TARGET`: следующий run вернёт прежнее поведение rewrites.
 
-VPS обязан резолвить upstream через независимые публичные resolvers, а не через переписываемый NextDNS profile — иначе получится цикл VPS → VPS. Отдельный DNS daemon не требуется. Схема не является клиентской аутентификацией; защита обеспечивается exact allowlist, silent reject, egress filtering и непубликацией VPS IP.
+VPS обязан резолвить upstream через независимые публичные resolvers, а не через переписываемый NextDNS profile — иначе получится цикл VPS → VPS. Отдельный DNS daemon не требуется. Схема не является клиентской аутентификацией; защита обеспечивается root allowlist с suffix-проверкой по границе точки, fail-closed reject, egress filtering и непубликацией VPS IP.
 
 + **Action** запускается ежедневно в **01:30 UTC** (04:30 по МСК).  
   Чтобы изменить время, отредактируйте cron в `.github/workflows/github_action.yml`

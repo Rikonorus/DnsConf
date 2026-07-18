@@ -135,7 +135,7 @@ public class ApacheSshProxySyncClient implements ProxySyncClient {
     }
 
     static void requireContractVersion(String commandOutput) {
-        if (!"1".equals(commandOutput.strip())) {
+        if (!"2".equals(commandOutput.strip())) {
             throw new ProcessException("Proxy allowlist contract is incompatible");
         }
     }

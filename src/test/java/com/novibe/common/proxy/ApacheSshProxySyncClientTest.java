@@ -46,11 +46,11 @@ class ApacheSshProxySyncClientTest {
     }
 
     @Test
-    void requiresOnlyContractVersionOne() {
-        ApacheSshProxySyncClient.requireContractVersion("1\n");
+    void requiresOnlyContractVersionTwo() {
+        ApacheSshProxySyncClient.requireContractVersion("2\n");
 
-        assertThrows(ProcessException.class, () -> ApacheSshProxySyncClient.requireContractVersion("2"));
-        assertThrows(ProcessException.class, () -> ApacheSshProxySyncClient.requireContractVersion("1\nstatus"));
+        assertThrows(ProcessException.class, () -> ApacheSshProxySyncClient.requireContractVersion("1"));
+        assertThrows(ProcessException.class, () -> ApacheSshProxySyncClient.requireContractVersion("2\nstatus"));
     }
 
     @Test

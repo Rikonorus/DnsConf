@@ -1,5 +1,6 @@
 package com.novibe.common.data_sources;
 
+import com.google.common.net.InternetDomainName;
 import com.novibe.common.exception.ProcessException;
 
 import java.nio.charset.StandardCharsets;
@@ -7,8 +8,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public record RedirectSourceSnapshot(List<RedirectSourceRecord> records, int malformedRecords) {
@@ -24,18 +27,42 @@ public record RedirectSourceSnapshot(List<RedirectSourceRecord> records, int mal
         return routes;
     }
 
-    public ProxyAllowlist allowlist() {
-        Set<String> domains = new LinkedHashSet<>();
+    public List<HostsOverrideListsLoader.BypassRoute> proxyBypassRoutes() {
+        Map<String, HostsOverrideListsLoader.BypassRoute> exactRoutes = new LinkedHashMap<>();
         for (RedirectSourceRecord record : records) {
-            domains.add(record.sourceHostname());
-            domains.add(record.effectiveHostname());
+            exactRoutes.putIfAbsent(record.effectiveHostname(),
+                    new HostsOverrideListsLoader.BypassRoute(record.ip(), record.effectiveHostname()));
         }
-        List<String> ordered = domains.stream().sorted(Comparator.naturalOrder()).toList();
+
+        Map<String, HostsOverrideListsLoader.BypassRoute> collapsedRoutes = new LinkedHashMap<>();
+        for (String hostname : exactRoutes.keySet()) {
+            String registrableRoot = registrableRoot(hostname);
+            String routeHostname = exactRoutes.containsKey(registrableRoot) ? registrableRoot : hostname;
+            collapsedRoutes.putIfAbsent(routeHostname, exactRoutes.get(routeHostname));
+        }
+
+        return List.copyOf(collapsedRoutes.values());
+    }
+
+    public ProxyAllowlist proxyAllowlist() {
+        List<String> ordered = proxyBypassRoutes().stream()
+                .map(HostsOverrideListsLoader.BypassRoute::website)
+                .sorted(Comparator.naturalOrder())
+                .toList();
         if (ordered.isEmpty()) {
             throw new ProcessException("Proxy allowlist cannot be empty");
         }
         String content = String.join("\n", ordered) + "\n";
         return new ProxyAllowlist(ordered, content.getBytes(StandardCharsets.UTF_8), sha256(content));
+    }
+
+    static String registrableRoot(String hostname) {
+        try {
+            InternetDomainName domain = InternetDomainName.from(hostname);
+            return domain.isUnderPublicSuffix() ? domain.topPrivateDomain().toString() : hostname;
+        } catch (IllegalArgumentException exception) {
+            throw new ProcessException("Proxy source contains an invalid hostname");
+        }
     }
 
     private static String sha256(String input) {
